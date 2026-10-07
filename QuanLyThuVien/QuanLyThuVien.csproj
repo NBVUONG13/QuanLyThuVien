@@ -35,6 +35,12 @@
     <WarningLevel>4</WarningLevel>
   </PropertyGroup>
   <ItemGroup>
+    <Reference Include="AWSSDK.Core, Version=4.0.0.0, Culture=neutral, PublicKeyToken=885c28607f98e604, processorArchitecture=MSIL">
+      <HintPath>..\packages\AWSSDK.Core.4.0.102.8\lib\net472\AWSSDK.Core.dll</HintPath>
+    </Reference>
+    <Reference Include="AWSSDK.S3, Version=4.0.0.0, Culture=neutral, PublicKeyToken=885c28607f98e604, processorArchitecture=MSIL">
+      <HintPath>..\packages\AWSSDK.S3.4.0.104.1\lib\net472\AWSSDK.S3.dll</HintPath>
+    </Reference>
     <Reference Include="Microsoft.Bcl.AsyncInterfaces, Version=8.0.0.0, Culture=neutral, PublicKeyToken=cc7b13ffcd2ddd51, processorArchitecture=MSIL">
       <HintPath>..\packages\Microsoft.Bcl.AsyncInterfaces.8.0.0\lib\net462\Microsoft.Bcl.AsyncInterfaces.dll</HintPath>
     </Reference>
@@ -81,8 +87,8 @@
     <Reference Include="System.Text.Encodings.Web, Version=8.0.0.0, Culture=neutral, PublicKeyToken=cc7b13ffcd2ddd51, processorArchitecture=MSIL">
       <HintPath>..\packages\System.Text.Encodings.Web.8.0.0\lib\net462\System.Text.Encodings.Web.dll</HintPath>
     </Reference>
-    <Reference Include="System.Text.Json, Version=8.0.0.5, Culture=neutral, PublicKeyToken=cc7b13ffcd2ddd51, processorArchitecture=MSIL">
-      <HintPath>..\packages\System.Text.Json.8.0.5\lib\net462\System.Text.Json.dll</HintPath>
+    <Reference Include="System.Text.Json, Version=8.0.0.6, Culture=neutral, PublicKeyToken=cc7b13ffcd2ddd51, processorArchitecture=MSIL">
+      <HintPath>..\packages\System.Text.Json.8.0.6\lib\net462\System.Text.Json.dll</HintPath>
     </Reference>
     <Reference Include="System.Threading.Channels, Version=8.0.0.0, Culture=neutral, PublicKeyToken=cc7b13ffcd2ddd51, processorArchitecture=MSIL">
       <HintPath>..\packages\System.Threading.Channels.8.0.0\lib\net462\System.Threading.Channels.dll</HintPath>
@@ -111,6 +117,21 @@
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
     </ApplicationDefinition>
+    <Compile Include="Services\AuthService.cs" />
+    <Compile Include="Services\AIService.cs" />
+    <Compile Include="Services\CloudStorageService.cs" />
+    <Compile Include="Services\DataBackupService.cs" />
+    <Compile Include="ViewModels\ReaderManagementViewModel.cs" />
+    <Compile Include="ViewModels\BorrowReturnViewModel.cs" />
+    <Compile Include="ViewModels\FineManagementViewModel.cs" />
+    <Compile Include="ViewModels\SearchViewModel.cs" />
+    <Compile Include="ViewModels\AIChatViewModel.cs" />
+    <Compile Include="ViewModels\HRManagementViewModel.cs" />
+    <Compile Include="ViewModels\DataManagementViewModel.cs" />
+    <Compile Include="ViewModels\BookManagementViewModel.cs" />
+    <Compile Include="ViewModels\DashboardViewModel.cs" />
+    <Compile Include="ViewModels\LoginViewModel.cs" />
+    <Compile Include="ViewModels\MainViewModel.cs" />
     <Page Include="MainWindow.xaml">
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
@@ -126,6 +147,16 @@
     </Compile>
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="Models\BookMetadataModel.cs" />
+    <Compile Include="Models\BookModel.cs" />
+    <Compile Include="Models\AuthorModel.cs" />
+    <Compile Include="Models\BorrowRecordModel.cs" />
+    <Compile Include="Models\CategoryModel.cs" />
+    <Compile Include="Models\SalaryModel.cs" />
+    <Compile Include="Models\TimesheetModel.cs" />
+    <Compile Include="Models\FineModel.cs" />
+    <Compile Include="Models\PublisherModel.cs" />
+    <Compile Include="Models\UserModel.cs" />
     <Compile Include="Properties\AssemblyInfo.cs">
       <SubType>Code</SubType>
     </Compile>
@@ -143,6 +174,7 @@
       <Generator>ResXFileCodeGenerator</Generator>
       <LastGenOutput>Resources.Designer.cs</LastGenOutput>
     </EmbeddedResource>
+    <None Include="CauTruc.md" />
     <None Include="packages.config" />
     <None Include="Properties\Settings.settings">
       <Generator>SettingsSingleFileGenerator</Generator>
@@ -153,10 +185,11 @@
     <None Include="App.config" />
   </ItemGroup>
   <ItemGroup>
-    <Folder Include="Models\" />
-    <Folder Include="Services\" />
-    <Folder Include="ViewModels\" />
     <Folder Include="Views\" />
+  </ItemGroup>
+  <ItemGroup>
+    <Analyzer Include="..\packages\AWSSDK.S3.4.0.104.1\analyzers\dotnet\cs\AWSSDK.S3.CodeAnalysis.dll" />
+    <Analyzer Include="..\packages\AWSSDK.S3.4.0.104.1\analyzers\dotnet\cs\SharedAnalysisCode.dll" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>
