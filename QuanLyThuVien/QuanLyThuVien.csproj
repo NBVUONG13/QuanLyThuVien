@@ -132,6 +132,39 @@
     <Compile Include="ViewModels\DashboardViewModel.cs" />
     <Compile Include="ViewModels\LoginViewModel.cs" />
     <Compile Include="ViewModels\MainViewModel.cs" />
+    <Compile Include="Views\AIChatView.xaml.cs">
+      <DependentUpon>AIChatView.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Views\BookManagementView.xaml.cs">
+      <DependentUpon>BookManagementView.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Views\BorrowReturnView.xaml.cs">
+      <DependentUpon>BorrowReturnView.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Views\DashboardView.xaml.cs">
+      <DependentUpon>DashboardView.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Views\DataManagementView.xaml.cs">
+      <DependentUpon>DataManagementView.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Views\FineManagementView.xaml.cs">
+      <DependentUpon>FineManagementView.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Views\HRManagementView.xaml.cs">
+      <DependentUpon>HRManagementView.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Views\LoginWindow.xaml.cs">
+      <DependentUpon>LoginWindow.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Views\MainWindow.xaml.cs">
+      <DependentUpon>MainWindow.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Views\ReaderManagementView.xaml.cs">
+      <DependentUpon>ReaderManagementView.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Views\SearchView.xaml.cs">
+      <DependentUpon>SearchView.xaml</DependentUpon>
+    </Compile>
     <Page Include="MainWindow.xaml">
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
@@ -145,6 +178,50 @@
       <DependentUpon>MainWindow.xaml</DependentUpon>
       <SubType>Code</SubType>
     </Compile>
+    <Page Include="Views\AIChatView.xaml">
+      <SubType>Designer</SubType>
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+    <Page Include="Views\BookManagementView.xaml">
+      <SubType>Designer</SubType>
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+    <Page Include="Views\BorrowReturnView.xaml">
+      <SubType>Designer</SubType>
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+    <Page Include="Views\DashboardView.xaml">
+      <SubType>Designer</SubType>
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+    <Page Include="Views\DataManagementView.xaml">
+      <SubType>Designer</SubType>
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+    <Page Include="Views\FineManagementView.xaml">
+      <SubType>Designer</SubType>
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+    <Page Include="Views\HRManagementView.xaml">
+      <SubType>Designer</SubType>
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+    <Page Include="Views\LoginWindow.xaml">
+      <SubType>Designer</SubType>
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+    <Page Include="Views\MainWindow.xaml">
+      <SubType>Designer</SubType>
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+    <Page Include="Views\ReaderManagementView.xaml">
+      <SubType>Designer</SubType>
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+    <Page Include="Views\SearchView.xaml">
+      <SubType>Designer</SubType>
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
   </ItemGroup>
   <ItemGroup>
     <Compile Include="Models\BookMetadataModel.cs" />
@@ -183,9 +260,7 @@
   <ItemGroup>
     <None Include="App.config" />
   </ItemGroup>
-  <ItemGroup>
-    <Folder Include="Views\" />
-  </ItemGroup>
+  <ItemGroup />
   <ItemGroup>
     <Analyzer Include="..\packages\AWSSDK.S3.4.0.104.1\analyzers\dotnet\cs\AWSSDK.S3.CodeAnalysis.dll" />
     <Analyzer Include="..\packages\AWSSDK.S3.4.0.104.1\analyzers\dotnet\cs\SharedAnalysisCode.dll" />
