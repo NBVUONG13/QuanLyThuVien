@@ -10,7 +10,6 @@ using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
-using System.Windows.Navigation;
 using System.Windows.Shapes;
 
 namespace QuanLyThuVien.Views
@@ -18,7 +17,7 @@ namespace QuanLyThuVien.Views
     /// <summary>
     /// Interaction logic for HRManagementView.xaml
     /// </summary>
-    public partial class HRManagementView : UserControl
+    public partial class HRManagementView : Window
     {
         public HRManagementView()
         {

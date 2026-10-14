@@ -153,6 +153,9 @@
     <Compile Include="Views\HRManagementView.xaml.cs">
       <DependentUpon>HRManagementView.xaml</DependentUpon>
     </Compile>
+    <Compile Include="Views\LoginHostWindow.xaml.cs">
+      <DependentUpon>LoginHostWindow.xaml</DependentUpon>
+    </Compile>
     <Compile Include="Views\LoginWindow.xaml.cs">
       <DependentUpon>LoginWindow.xaml</DependentUpon>
     </Compile>
@@ -203,6 +206,10 @@
       <Generator>MSBuild:Compile</Generator>
     </Page>
     <Page Include="Views\HRManagementView.xaml">
+      <SubType>Designer</SubType>
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+    <Page Include="Views\LoginHostWindow.xaml">
       <SubType>Designer</SubType>
       <Generator>MSBuild:Compile</Generator>
     </Page>
