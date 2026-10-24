@@ -3,4 +3,5 @@
     <File Path="CauTruc.md" />
   </Folder>
   <Project Path="QuanLyThuVien/QuanLyThuVien.csproj" Id="ff683e77-c182-4953-8488-eadf3e06f910" />
+  <Project Path="SmartLibrary.Api/SmartLibrary.Api.csproj" Id="b29ae754-e02f-480d-a1b1-824fbd3dd8b5" />
 </Solution>

@@ -23,5 +23,10 @@ namespace QuanLyThuVien.Views
         {
             InitializeComponent();
         }
+
+        private void LoginWindow_Loaded(object sender, RoutedEventArgs e)
+        {
+
+        }
     }
 }
