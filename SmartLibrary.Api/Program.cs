@@ -90,6 +90,7 @@ app.MapPost("/api/auth/login", async (
     LoginRequest request,
     AuthService authService,
     SessionService sessions,
+    IConfiguration configuration,
     CancellationToken cancellationToken) =>
 {
     try
@@ -110,6 +111,20 @@ app.MapPost("/api/auth/login", async (
             }, statusCode: StatusCodes.Status401Unauthorized);
         }
 
+        // Guest is a library identity only, NEVER an interactive login. Fail closed.
+        // The marker is server-owned; clients cannot elevate/change it.
+        var loginCs = configuration.GetConnectionString("AivenPostgres")
+            ?? throw new InvalidOperationException("Missing database configuration.");
+        await using (var loginDb = new NpgsqlConnection(loginCs))
+        {
+            await loginDb.OpenAsync(cancellationToken);
+            await using var guestGuard = new NpgsqlCommand(
+                "SELECT is_guest FROM public.users WHERE user_id=@id;", loginDb);
+            guestGuard.Parameters.AddWithValue("id", user.UserId);
+            if (await guestGuard.ExecuteScalarAsync(cancellationToken) is not bool isGuest || isGuest)
+                return Results.Json(new { message = "Sai thong tin dang nhap hoac tai khoan chua duoc kich hoat." },
+                    statusCode: 401);
+        }
         CreatedSession issued = sessions.Create(user.UserId, user.Username, user.Role);
         return Results.Ok(new
         {
@@ -127,6 +142,18 @@ app.MapPost("/api/auth/login", async (
     catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
     {
         return Results.StatusCode(StatusCodes.Status499ClientClosedRequest);
+    }
+    catch (PostgresException exception)
+    {
+        // Only SQLSTATE is logged: never log credentials, SQL parameters or PII.
+        app.Logger.LogError(
+            "Login API PostgreSQL failure: SQLSTATE={SqlState}",
+            exception.SqlState);
+
+        return Results.Json(new
+        {
+            message = "Loi PostgreSQL khi dang nhap. Kiem tra migration Guest va SQLSTATE trong console API."
+        }, statusCode: StatusCodes.Status503ServiceUnavailable);
     }
     catch (Exception exception)
     {
@@ -881,6 +908,249 @@ app.MapGet("/api/readers", async (string? query, HttpRequest request, SessionSer
 });
 
 
+
+// STEP 63: Unified counter request. A Guest is a non-login Reader; an existing
+// Reader/Guest uses the SAME user_id, history, borrow_requests and review pipeline.
+// CCCD is hashed with the very same HMAC key as the Step-62 duplicate check.
+app.MapPost("/api/borrow-requests/walkin", async (
+    WalkInBorrowRequest input, HttpRequest request, SessionService sessions,
+    IConfiguration config, CancellationToken ct) =>
+{
+    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    var actor = sessions.Validate(ReadBearerToken(request));
+    if (actor is null) return Results.Unauthorized();
+    if (actor.Role is not ("Staff" or "Admin")) return Results.StatusCode(403);
+    if (!input.StaffVerifiedIdentity)
+        return Results.BadRequest(new { message = "Staff phải xác minh giấy tờ gốc hoặc xác nhận liên hệ trực tiếp tại quầy." });
+    if (input.Items is null || input.Items.Count is < 1 or > 5 ||
+       input.Items.Any(x => x.BookId <= 0 || x.RequestedDays is < 1 or > 90) ||
+       input.Items.Select(x => x.BookId).Distinct().Count() != input.Items.Count ||
+       (input.Note?.Length ?? 0) > 500)
+        return Results.BadRequest(new { message = "Đơn cần 1–5 đầu sách khác nhau, thời hạn từ 1 đến 90 ngày." });
+    string name = (input.FullName ?? "").Trim();
+    string phoneRaw = (input.Phone ?? "").Trim();
+    string citizen = (input.CitizenId ?? "").Trim();
+    bool hasPhone = phoneRaw.Length > 0, hasCitizen = citizen.Length > 0;
+    if (!hasPhone && !hasCitizen)
+        return Results.BadRequest(new { message = "Phải có SĐT hoặc CCCD đã kiểm tra tại quầy." });
+    if ((input.ExistingReaderUserId ?? 0) < 0 || (input.ExistingReaderUserId is null &&
+       (name.Length < 2 || name.Length > 200)))
+        return Results.BadRequest(new { message = "Tên Guest phải từ 2 đến 200 ký tự." });
+    if (phoneRaw.Length > 24 || citizen.Length > 20 ||
+       (hasCitizen && (citizen.Length != 12 || citizen.Any(c => c < '0' || c > '9'))))
+        return Results.BadRequest(new { message = "Định dạng SĐT/CCCD không hợp lệ." });
+    string phoneDigits = new string(phoneRaw.Where(char.IsDigit).ToArray());
+    if (phoneDigits.StartsWith("84", StringComparison.Ordinal) && phoneDigits.Length == 11)
+        phoneDigits = "0" + phoneDigits.Substring(2);
+    if (hasPhone && (phoneRaw.Any(c => !char.IsDigit(c) && c != '+' && c != ' ' && c != '-') ||
+                    phoneDigits.Length != 10 || phoneDigits[0] != '0'))
+        return Results.BadRequest(new { message = "SĐT Việt Nam phải là 10 chữ số hoặc +84 tương đương." });
+    string phoneCanonical = hasPhone ? "+84" + phoneDigits.Substring(1) : "";
+    string[] phones = hasPhone ? new[] { phoneDigits, phoneCanonical, "84" + phoneDigits.Substring(1) } : Array.Empty<string>();
+    byte[] fingerprint = Array.Empty<byte>();
+    if (hasCitizen)
+    {
+        byte[] key;
+        try { key = Convert.FromBase64String(config["GuestIdentity:HmacKeyBase64"] ?? ""); }
+        catch (FormatException) { key = Array.Empty<byte>(); }
+        if (key.Length < 32)
+            return Results.Json(new { message = "Thiếu cấu hình GuestIdentity:HmacKeyBase64 trong User Secrets." }, statusCode: 503);
+        using var hmac = new HMACSHA256(key);
+        fingerprint = hmac.ComputeHash(Encoding.UTF8.GetBytes(citizen));
+    }
+    try
+    {
+        var cs = config.GetConnectionString("AivenPostgres")
+            ?? throw new InvalidOperationException("Missing connection string.");
+        await using var db = new NpgsqlConnection(cs);
+        await db.OpenAsync(ct);
+        // SERIALIZABLE + uniqueness ensure counter clerks cannot create duplicates concurrently.
+        await using var tx = await db.BeginTransactionAsync(System.Data.IsolationLevel.Serializable, ct);
+        var matches = new List<(long userId, bool byPhone, bool byCitizen)>();
+        await using (var check = new NpgsqlCommand(@"
+           SELECT rp.user_id,
+                  COALESCE(rp.phone_e164=ANY(@phones),FALSE),
+                  COALESCE(rp.citizen_id_fingerprint=@fp,FALSE)
+           FROM public.reader_profiles rp
+           WHERE (@phone AND rp.phone_e164=ANY(@phones))
+              OR (@citizen AND rp.citizen_id_fingerprint=@fp)
+           FOR UPDATE OF rp;", db, tx))
+        {
+            check.Parameters.Add("phones", NpgsqlDbType.Array | NpgsqlDbType.Text).Value = phones;
+            check.Parameters.Add("fp", NpgsqlDbType.Bytea).Value = fingerprint;
+            check.Parameters.AddWithValue("phone", hasPhone);
+            check.Parameters.AddWithValue("citizen", hasCitizen);
+            await using var rd = await check.ExecuteReaderAsync(ct);
+            while (await rd.ReadAsync(ct)) matches.Add((rd.GetInt64(0), rd.GetBoolean(1), rd.GetBoolean(2)));
+        }
+        long readerId;
+        bool guestCreated = false;
+        string? createdGuestCode = null;
+        if (input.ExistingReaderUserId is long existingId)
+        {
+            // No blind lookup by user id: ALL supplied identifiers MUST match one and
+            // only one existing profile. A family-shared phone cannot auto-link profiles.
+            if (matches.Count != 1 || matches[0].userId != existingId ||
+               (hasPhone && !matches[0].byPhone) || (hasCitizen && !matches[0].byCitizen))
+                return Results.Conflict(new { message = "Hồ sơ được chọn không khớp toàn bộ định danh; xem chi tiết và xác minh tại quầy." });
+            readerId = existingId;
+        }
+        else
+        {
+            if (matches.Count > 0)
+                return Results.Conflict(new { message = "Đã tồn tại hồ sơ khớp SĐT/CCCD. KHÔNG tạo Guest trùng; chọn hồ sơ cũ sau khi xem lịch sử." });
+            int roleId;
+            await using (var role = new NpgsqlCommand("SELECT role_id FROM public.roles WHERE role_name='Reader';", db, tx))
+            { var id = await role.ExecuteScalarAsync(ct); if (id is null) return Results.Json(new { message = "Thiếu quyền Reader." }, statusCode: 503); roleId = Convert.ToInt32(id); }
+            long tierId;
+            await using (var tier = new NpgsqlCommand("SELECT tier_id FROM public.reader_tiers WHERE is_default=TRUE AND is_active=TRUE;", db, tx))
+            { var id = await tier.ExecuteScalarAsync(ct); if (id is null) return Results.Json(new { message = "Thiếu hạng Reader mặc định." }, statusCode: 503); tierId = Convert.ToInt64(id); }
+            // Database sequence gives distinct human-readable Guest codes, even if
+            // multiple clerks submit simultaneously. Gaps after rolled-back requests
+            // are expected; codes must be unique, not gap-free.
+            long guestNumber;
+            await using (var numberCommand = new NpgsqlCommand(
+                "SELECT nextval('public.guest_username_seq');", db, tx))
+            {
+                guestNumber = Convert.ToInt64(await numberCommand.ExecuteScalarAsync(ct));
+            }
+            string internalUsername = "guest" + guestNumber.ToString("D5", CultureInfo.InvariantCulture);
+            createdGuestCode = internalUsername;
+            // Intentionally invalid BCrypt hash plus is_guest guard: never an app credential.
+            await using (var create = new NpgsqlCommand(@"
+                INSERT INTO public.users(username,password_hash,role_id,account_status,is_guest)
+                VALUES(@name,'!guest-no-password!',@role,'active',TRUE) RETURNING user_id;", db, tx))
+            {
+                create.Parameters.AddWithValue("name", internalUsername);
+                create.Parameters.AddWithValue("role", roleId);
+                readerId = Convert.ToInt64(await create.ExecuteScalarAsync(ct));
+            }
+            await using (var profile = new NpgsqlCommand(@"
+                INSERT INTO public.reader_profiles
+                  (user_id,reader_code,full_name,phone_e164,phone_verified_at,
+                   citizen_id_fingerprint,citizen_verified_at,tier_id)
+                VALUES(@uid,@code,@name,@phone,@phoneVerified,@fp,@citizenVerified,@tier);", db, tx))
+            {
+                profile.Parameters.AddWithValue("uid", readerId);
+                // Show the same Guest identity in reader list, request history and username.
+                profile.Parameters.AddWithValue("code", internalUsername);
+                profile.Parameters.AddWithValue("name", name);
+                profile.Parameters.AddWithValue("phone", (object?)(hasPhone ? phoneCanonical : null) ?? DBNull.Value);
+                // Manual in-person verification: Staff must actually verify phone possession.
+                profile.Parameters.AddWithValue("phoneVerified", (hasPhone ? (object)DateTime.UtcNow : DBNull.Value));
+                profile.Parameters.Add("fp", NpgsqlDbType.Bytea).Value = hasCitizen ? (object)fingerprint : DBNull.Value;
+                profile.Parameters.AddWithValue("citizenVerified", (hasCitizen ? (object)DateTime.UtcNow : DBNull.Value));
+                profile.Parameters.AddWithValue("tier", tierId);
+                await profile.ExecuteNonQueryAsync(ct);
+            }
+            guestCreated = true;
+        }
+        int copiesLimit, daysLimit;
+        await using (var cap = new NpgsqlCommand(@"
+            SELECT COALESCE(rp.override_max_active_copies,t.max_active_copies),
+                   COALESCE(rp.override_max_loan_days,t.max_loan_days)
+            FROM public.reader_profiles rp JOIN public.reader_tiers t ON t.tier_id=rp.tier_id
+            JOIN public.users u ON u.user_id=rp.user_id
+            WHERE rp.user_id=@uid AND u.account_status='active' AND t.is_active=TRUE
+            FOR UPDATE OF rp;", db, tx))
+        {
+            cap.Parameters.AddWithValue("uid", readerId);
+            await using var rd = await cap.ExecuteReaderAsync(ct);
+            if (!await rd.ReadAsync(ct)) return Results.StatusCode(403);
+            copiesLimit = rd.GetInt32(0); daysLimit = rd.GetInt32(1);
+        }
+        await using (var ban = new NpgsqlCommand(@"
+            SELECT action FROM public.audit_logs WHERE entity_type='reader_borrow_access'
+              AND entity_id=@reader AND action IN ('reader_borrow_block','reader_borrow_unblock')
+            ORDER BY audit_id DESC LIMIT 1;", db, tx))
+        {
+            ban.Parameters.AddWithValue("reader", readerId.ToString(CultureInfo.InvariantCulture));
+            if (await ban.ExecuteScalarAsync(ct) is string action && action == "reader_borrow_block")
+                return Results.StatusCode(403);
+        }
+        if (input.Items.Any(x => x.RequestedDays > daysLimit))
+            return Results.BadRequest(new { message = $"Hạng Reader chỉ cho mượn tối đa {daysLimit} ngày." });
+        await using (var c = new NpgsqlCommand(@"
+            SELECT (SELECT COUNT(*) FROM public.borrow_details d
+                    JOIN public.borrows b ON b.borrow_id=d.borrow_id
+                    WHERE b.reader_user_id=@uid AND d.closed_at IS NULL)
+                 + (SELECT COUNT(*) FROM public.borrow_request_items i
+                    JOIN public.borrow_requests br ON br.request_id=i.request_id
+                    WHERE br.reader_user_id=@uid AND br.status='pending' AND i.status='pending');", db, tx))
+        {
+            c.Parameters.AddWithValue("uid", readerId);
+            if (Convert.ToInt64(await c.ExecuteScalarAsync(ct)) + input.Items.Count > copiesLimit)
+                return Results.Conflict(new { message = "Vượt hạn mức sách đang mượn/đơn chờ của độc giả." });
+        }
+        await using (var books = new NpgsqlCommand(@"
+            SELECT COUNT(*) FROM public.books WHERE is_visible=TRUE AND book_id=ANY(@ids);", db, tx))
+        {
+            books.Parameters.Add("ids", NpgsqlDbType.Array | NpgsqlDbType.Bigint).Value =
+                input.Items.Select(x => x.BookId).ToArray();
+            if (Convert.ToInt64(await books.ExecuteScalarAsync(ct)) != input.Items.Count)
+                return Results.BadRequest(new { message = "Có đầu sách không tồn tại hoặc đã ẩn." });
+        }
+        string code = "BR-W-" + Guid.NewGuid().ToString("N")[..16].ToUpperInvariant();
+        long requestId;
+        await using (var req = new NpgsqlCommand(@"
+            INSERT INTO public.borrow_requests
+                (request_code,reader_user_id,status,note,origin)
+            VALUES(@code,@uid,'pending',@note,'staff_walkin') RETURNING request_id;", db, tx))
+        {
+            req.Parameters.AddWithValue("code", code);
+            req.Parameters.AddWithValue("uid", readerId);
+            req.Parameters.AddWithValue("note", (object?)input.Note?.Trim() ?? DBNull.Value);
+            requestId = Convert.ToInt64(await req.ExecuteScalarAsync(ct));
+        }
+        foreach (var item in input.Items)
+        {
+            await using var detail = new NpgsqlCommand(@"
+                INSERT INTO public.borrow_request_items(request_id,book_id,requested_days,status)
+                VALUES(@rid,@bid,@days,'pending');", db, tx);
+            detail.Parameters.AddWithValue("rid", requestId);
+            detail.Parameters.AddWithValue("bid", item.BookId);
+            detail.Parameters.AddWithValue("days", item.RequestedDays);
+            await detail.ExecuteNonQueryAsync(ct);
+        }
+        await using (var audit = new NpgsqlCommand(@"
+            INSERT INTO public.audit_logs(actor_user_id,action,entity_type,entity_id,details)
+            VALUES(@actor,'walkin_request_create','borrow_request',@request,
+                   jsonb_build_object('reader_user_id',@reader,'guest_created',@guest,
+                                      'identity_checked_at_counter',TRUE,'book_count',@total));", db, tx))
+        {
+            audit.Parameters.AddWithValue("actor", actor.UserId);
+            audit.Parameters.AddWithValue("request", requestId.ToString(CultureInfo.InvariantCulture));
+            audit.Parameters.AddWithValue("reader", readerId);
+            audit.Parameters.AddWithValue("guest", guestCreated);
+            audit.Parameters.AddWithValue("total", input.Items.Count);
+            await audit.ExecuteNonQueryAsync(ct);
+        }
+        await tx.CommitAsync(ct);
+        return Results.Ok(new
+        {
+            message = guestCreated
+            ? "Đã tạo hồ sơ Guest " + createdGuestCode + " (không đăng nhập) và đơn chờ duyệt."
+            : "Đã dùng hồ sơ cũ và tạo đơn chờ duyệt.",
+            readerUserId = readerId,
+            requestId,
+            requestCode = code,
+            guestCreated,
+            guestCode = createdGuestCode
+        });
+    }
+    catch (PostgresException e) when (e.SqlState == PostgresErrorCodes.UniqueViolation ||
+                                    e.SqlState == PostgresErrorCodes.SerializationFailure)
+    { return Results.Conflict(new { message = "Dữ liệu vừa thay đổi hoặc định danh đã tồn tại. Tra cứu lại trước khi tiếp nhận." }); }
+    catch (PostgresException e) when (e.SqlState == PostgresErrorCodes.UndefinedColumn ||
+                                    e.SqlState == PostgresErrorCodes.UndefinedTable)
+    { return Results.Json(new { message = "Chưa chạy migration bước 63 hoặc 58." }, statusCode: 503); }
+    catch (OperationCanceledException) when (ct.IsCancellationRequested) { return Results.StatusCode(499); }
+    catch (Exception e)
+    {
+        app.Logger.LogError("Walk-in request failed: {Type}", e.GetType().Name);
+        return Results.Json(new { message = "Không thể tạo đơn tại quầy. Không có dữ liệu nào được ghi nếu transaction thất bại." }, statusCode: 503);
+    }
+});
 
 // STEP 62: Walk-in identity preflight. STAFF ONLY; no raw CCCD in URL/logs/responses.
 // This is read-only: no Guest creation, identity merge, or checkout is performed here.
@@ -1719,6 +1989,7 @@ app.MapPost("/api/loans/checkout", async (CheckoutLoanRequest input,
             JOIN public.roles r ON r.role_id=u.role_id
             JOIN public.reader_tiers t ON t.tier_id=rp.tier_id
             WHERE LOWER(u.username)=LOWER(@username) AND u.account_status='active'
+                  AND u.is_guest=FALSE -- Guest must go through the shared request/review flow
                   AND r.role_name='Reader' AND t.is_active=TRUE
             FOR UPDATE OF rp;", db, tx))
         {
@@ -1951,6 +2222,7 @@ app.MapGet("/api/borrow-requests", async (HttpRequest request, SessionService se
                    COALESCE((SELECT rp.full_name FROM public.reader_profiles rp
                              WHERE rp.user_id=br.reader_user_id),u.username),
                    br.reader_user_id,
+                   br.origin,
                    (SELECT COUNT(*) FROM public.borrow_details bd
                      JOIN public.borrows bo ON bo.borrow_id=bd.borrow_id
                      WHERE bo.reader_user_id=br.reader_user_id
@@ -1980,9 +2252,10 @@ app.MapGet("/api/borrow-requests", async (HttpRequest request, SessionService se
             openOverdue = reader.GetInt64(9),
             readerFullName = reader.GetString(10),
             readerUserId = reader.GetInt64(11),
-            completedReturns = reader.GetInt64(12),
+            completedReturns = reader.GetInt64(13),
+            origin = reader.GetString(12),
             riskLevel = reader.GetInt64(9) > 0 ? "red" : reader.GetInt64(8) > 0 && reader.GetInt64(8) <= 2 ? "yellow"
-                : reader.GetInt64(8) > 2 ? "orange" : reader.GetInt64(12) > 0 ? "green" : "neutral"
+                : reader.GetInt64(8) > 2 ? "orange" : reader.GetInt64(13) > 0 ? "green" : "neutral"
         });
         return Results.Ok(new { requests = result });
     }
@@ -2470,3 +2743,7 @@ public sealed record NewBorrowRequestItem(long BookId, int RequestedDays);
 public sealed record ReviewBorrowRequest(bool Approve, string? Note);
 
 public sealed record ReaderIdentityLookupRequest(string? Phone, string? CitizenId);
+public sealed record WalkInBorrowRequest(long? ExistingReaderUserId, string? FullName,
+    string? Phone, string? CitizenId, bool StaffVerifiedIdentity,
+    List<NewBorrowRequestItem> Items, string? Note);
+

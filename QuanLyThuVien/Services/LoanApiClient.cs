@@ -236,6 +236,35 @@ namespace QuanLyThuVien.Services
             [DataMember(Name = "approve")] public bool Approve { get; set; }
             [DataMember(Name = "note")] public string Note { get; set; }
         }
+        // Same borrow_requests table as Reader app orders; creates Guest and order atomically.
+        public Task<LoanActionResult> CreateWalkInRequestAsync(string token, long? existingReaderId,
+            string fullName, string phone, string citizenId, bool staffVerified,
+            List<BorrowRequestLine> items, string note)
+        {
+            return SendActionAsync("http://127.0.0.1:5082/api/borrow-requests/walkin", token,
+                Serialize(new WalkInRequestDto
+                {
+                    ExistingReaderUserId = existingReaderId,
+                    FullName = fullName,
+                    Phone = phone,
+                    CitizenId = citizenId,
+                    StaffVerifiedIdentity = staffVerified,
+                    Items = items,
+                    Note = note
+                }));
+        }
+        [DataContract]
+        private sealed class WalkInRequestDto
+        {
+            [DataMember(Name = "existingReaderUserId")] public long? ExistingReaderUserId { get; set; }
+            [DataMember(Name = "fullName")] public string FullName { get; set; }
+            [DataMember(Name = "phone")] public string Phone { get; set; }
+            [DataMember(Name = "citizenId")] public string CitizenId { get; set; }
+            [DataMember(Name = "staffVerifiedIdentity")] public bool StaffVerifiedIdentity { get; set; }
+            [DataMember(Name = "items")] public List<BorrowRequestLine> Items { get; set; }
+            [DataMember(Name = "note")] public string Note { get; set; }
+        }
+
         // POST instead of GET: raw phone/CCCD is never placed in a URL/query string.
         public async Task<IdentityCheckResult> CheckReaderIdentityAsync(string token, string phone, string citizenId)
         {
@@ -450,6 +479,8 @@ namespace QuanLyThuVien.Services
         [DataMember(Name = "requestId")] public long RequestId { get; set; }
         [DataMember(Name = "requestCode")] public string RequestCode { get; set; }
         [DataMember(Name = "readerUsername")] public string ReaderUsername { get; set; }
+        [DataMember(Name = "origin")] public string Origin { get; set; }
+        public string OriginLabel => Origin == "staff_walkin" ? "Tại quầy" : "Qua app";
         [DataMember(Name = "status")] public string Status { get; set; }
         [DataMember(Name = "requestedAt")] public string RequestedAt { get; set; }
         [DataMember(Name = "note")] public string Note { get; set; }

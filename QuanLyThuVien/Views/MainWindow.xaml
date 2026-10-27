@@ -293,6 +293,8 @@
                                                     Width="185" MinWidth="160" />
                                 <DataGridTextColumn Header="Reader" Binding="{Binding ReaderUsername, Mode=OneWay}"
                                                     Width="120" />
+                                <DataGridTextColumn Header="Nguồn đơn" Binding="{Binding OriginLabel, Mode=OneWay}"
+                                                    Width="105" />
                                 <DataGridTextColumn Header="Ngày gửi" Binding="{Binding RequestedAt, Mode=OneWay}"
                                                     Width="155" />
                                 <DataGridTextColumn Header="Trạng thái" Binding="{Binding Status, Mode=OneWay}"
@@ -396,132 +398,224 @@
                 </Border>
             </DataTemplate>
 
-            <!-- Borrow / return uses existing MainWindow shell; VM is in MainViewModel.cs. -->
-            <DataTemplate DataType="{x:Type vm:BorrowReturnViewModel}">
-                <StackPanel Margin="0,0,0,20">
-                    <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
-                        <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE8F1;" FontSize="25"
-                               Foreground="#6951A1" Margin="0,0,13,0" />
-                        <TextBlock Text="QUẢN LÝ MƯỢN / TRẢ &amp; LỊCH SỬ" FontSize="27" FontWeight="Bold"
-                               Foreground="#35294D" />
-                    </StackPanel>
-                    <TextBlock Text="Đơn đã đặt, trạng thái duyệt và lịch sử cuốn đã giao · Thời gian UTC"
-                           FontSize="12" Foreground="#796A8E" Margin="0,0,0,13" />
-                    <Border Background="#F0EBF8" BorderBrush="#D7CBEB" BorderThickness="1"
-                        CornerRadius="7" Padding="12" Margin="0,0,0,12">
-                        <DockPanel>
-                            <TextBlock DockPanel.Dock="Left" FontFamily="Segoe MDL2 Assets" Text="&#xE946;"
-                                   Foreground="#6951A1" FontSize="17" Margin="0,0,10,0" />
-                            <TextBlock Text="{Binding Message, Mode=OneWay}" TextWrapping="Wrap"
-                                   Foreground="#514074" />
-                        </DockPanel>
-                    </Border>
-                    <Button Command="{Binding RefreshCommand}" Height="38" Width="190"
-                        Background="#6951A1" Foreground="White" BorderThickness="0"
-                        HorizontalAlignment="Left" Margin="0,0,0,16">
-                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
-                            <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE72C;" Margin="0,0,8,0" />
-                            <TextBlock Text="LÀM MỚI PHIẾU MƯỢN" />
-                        </StackPanel>
-                    </Button>
 
-                    <!-- The pre-existing direct checkout is retained for Staff/Admin to avoid feature loss.
-                     Unified walk-in Guest intake will move its creation into borrow_requests in a separate migration.
-                     This legacy form can currently checkout ONLY an existing active Reader with a physical copy. -->
-                    <StackPanel Visibility="{Binding CanManage, Converter={StaticResource BoolVisibility}}">
-                        <Border Background="White" BorderBrush="#E6DFF1" BorderThickness="1" CornerRadius="9" Padding="17" Margin="0,0,0,15">
+            <!-- STEP64: Counter is a DEDICATED page, not nested in loan history. -->
+            <DataTemplate x:Key="WalkInCounterTemplate">
+                <StackPanel Margin="0,0,0,18">
+                    <TextBlock Text="TIẾP NHẬN TẠI QUẦY" FontSize="27" FontWeight="Bold"
+                               Foreground="#35294D" Margin="0,0,0,4"/>
+                    <TextBlock Text="Chọn hồ sơ cũ hoặc hồ sơ mới. Chỉ phần đang chọn xuất hiện; đơn gửi đi vẫn chờ duyệt như Reader."
+                               Foreground="#766B87" TextWrapping="Wrap" Margin="0,0,0,13"/>
+                    <Grid Margin="0,0,0,15">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="10"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <Button Grid.Column="0" Height="45" Command="{Binding ShowExistingWalkInCommand}"
+                                Content="1  DÙNG HỒ SƠ CŨ" FontWeight="Bold" BorderThickness="1">
+                            <Button.Style>
+                                <Style TargetType="Button">
+                                    <Setter Property="Background" Value="#F2EDF8"/>
+                                    <Setter Property="Foreground" Value="#594390"/>
+                                    <Setter Property="BorderBrush" Value="#C9BBDD"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding WalkInExistingMode}" Value="True">
+                                            <Setter Property="Background" Value="#594390"/>
+                                            <Setter Property="Foreground" Value="White"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
+                        </Button>
+                        <Button Grid.Column="2" Height="45" Command="{Binding ShowNewWalkInCommand}"
+                                Content="2  TẠO HỒ SƠ MỚI (GUEST)" FontWeight="Bold" BorderThickness="1">
+                            <Button.Style>
+                                <Style TargetType="Button">
+                                    <Setter Property="Background" Value="#EFF7F2"/>
+                                    <Setter Property="Foreground" Value="#246A4E"/>
+                                    <Setter Property="BorderBrush" Value="#B9DEC9"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding WalkInNewMode}" Value="True">
+                                            <Setter Property="Background" Value="#246A4E"/>
+                                            <Setter Property="Foreground" Value="White"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
+                        </Button>
+                    </Grid>
+                    <Border Background="#F0EBF8" BorderBrush="#D7CBEB" BorderThickness="1"
+                            CornerRadius="7" Padding="11" Margin="0,0,0,14">
+                        <TextBlock Text="{Binding Message, Mode=OneWay}" Foreground="#514074" TextWrapping="Wrap" />
+                    </Border>
+
+                    <!-- Two columns to eliminate the old very tall vertical form. -->
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="9*"/>
+                            <ColumnDefinition Width="14"/>
+                            <ColumnDefinition Width="11*"/>
+                        </Grid.ColumnDefinitions>
+                        <!-- LEFT: Identity and profile, one of two modes. -->
+                        <Border Grid.Column="0" Background="White" BorderBrush="#E6DFF1"
+                                BorderThickness="1" CornerRadius="9" Padding="14" VerticalAlignment="Top">
                             <StackPanel>
-                                <TextBlock Text="Tiếp nhận tại quầy — độc giả đã có hồ sơ" FontSize="18" FontWeight="SemiBold" Foreground="#35294D" Margin="0,0,0,13"/>
-                                <!-- Preflight identity check; no sensitive ID appears in result rows. -->
-                                <Border Background="#F6F2FC" BorderBrush="#DCCFED" BorderThickness="1"
-                                    CornerRadius="8" Padding="14" Margin="0,0,0,16">
-                                    <StackPanel>
-                                        <TextBlock Text="🔎 KIỂM TRA HỒ SƠ CŨ / KHÁCH ĐẾN TRỰC TIẾP"
-                                               Foreground="#4B3972" FontWeight="Bold" FontSize="15" />
-                                        <TextBlock Text="Nhập SĐT hoặc CCCD khách xuất trình. Nếu đã có hồ sơ Reader/Guest, phải xem lịch sử trước khi tiếp nhận."
-                                               TextWrapping="Wrap" Margin="0,5,0,10" Foreground="#635674" FontSize="12" />
-                                        <Grid>
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="*"/>
-                                                <ColumnDefinition Width="12"/>
-                                                <ColumnDefinition Width="*"/>
-                                            </Grid.ColumnDefinitions>
-                                            <StackPanel Grid.Column="0">
-                                                <TextBlock Text="Số điện thoại (không bắt buộc nếu có CCCD)" FontWeight="SemiBold"/>
-                                                <TextBox Text="{Binding IdentityPhone, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                                     MaxLength="24" Height="35" Padding="8,6" Margin="0,5,0,0"/>
-                                            </StackPanel>
-                                            <StackPanel Grid.Column="2">
-                                                <TextBlock Text="CCCD 12 số (không hiển thị trong kết quả)" FontWeight="SemiBold"/>
-                                                <TextBox Text="{Binding IdentityCitizen, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                                     MaxLength="12" Height="35" Padding="8,6" Margin="0,5,0,0"/>
-                                            </StackPanel>
-                                        </Grid>
-                                        <DockPanel Margin="0,10,0,9">
-                                            <Button DockPanel.Dock="Right" Command="{Binding CheckIdentityCommand}"
-                                                Content="KIỂM TRA TRÙNG" Background="#6951A1"
-                                                Foreground="White" BorderThickness="0" Height="33" Width="150"/>
-                                            <TextBlock Text="{Binding IdentityMessage, Mode=OneWay}"
-                                                   Foreground="#8D283F" FontWeight="SemiBold" TextWrapping="Wrap"
-                                                   VerticalAlignment="Center" Margin="0,0,12,0"/>
-                                        </DockPanel>
-                                        <DataGrid ItemsSource="{Binding IdentityMatches, Mode=OneWay}"
+                                <TextBlock Text="BƯỚC 1 · XÁC MINH KHÁCH" Foreground="#45315F"
+                                           FontWeight="Bold" FontSize="15" Margin="0,0,0,5"/>
+                                <TextBlock Text="Nhập SĐT hoặc CCCD để chống tạo hồ sơ trùng."
+                                           Foreground="#746782" FontSize="12" TextWrapping="Wrap"
+                                           Margin="0,0,0,12"/>
+                                <TextBlock Text="Số điện thoại" FontWeight="SemiBold" />
+                                <TextBox Text="{Binding IdentityPhone, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                         Height="35" Padding="8,6" MaxLength="24" Margin="0,5,0,8"/>
+                                <TextBlock Text="CCCD (12 số, nếu dùng)" FontWeight="SemiBold" />
+                                <TextBox Text="{Binding IdentityCitizen, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                         Height="35" Padding="8,6" MaxLength="12" Margin="0,5,0,8"/>
+                                <Button Content="KIỂM TRA TRÙNG" Command="{Binding CheckIdentityCommand}"
+                                        Height="35" Width="160" HorizontalAlignment="Left"
+                                        Background="#6951A1" Foreground="White" BorderThickness="0" />
+                                <TextBlock Text="{Binding IdentityMessage, Mode=OneWay}"
+                                           Foreground="#9C334C" TextWrapping="Wrap"
+                                           FontSize="12" Margin="0,9,0,10"/>
+
+                                <!-- MODE A: only existing profiles and history selection. -->
+                                <StackPanel Visibility="{Binding WalkInExistingMode, Converter={StaticResource BoolVisibility}}">
+                                    <TextBlock Text="HỒ SƠ ĐÃ TỒN TẠI" FontWeight="Bold"
+                                               Foreground="#594390" Margin="0,1,0,8"/>
+                                    <DataGrid ItemsSource="{Binding IdentityMatches, Mode=OneWay}"
                                               SelectedItem="{Binding SelectedIdentityMatch, Mode=TwoWay}"
                                               AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False"
-                                              CanUserDeleteRows="False" Height="125" Background="White"
+                                              CanUserDeleteRows="False" Height="120" Background="White"
                                               ScrollViewer.HorizontalScrollBarVisibility="Auto">
-                                            <DataGrid.Columns>
-                                                <DataGridTextColumn Header="Mã độc giả" Binding="{Binding ReaderCode, Mode=OneWay}" Width="125"/>
-                                                <DataGridTextColumn Header="Họ tên" Binding="{Binding FullName, Mode=OneWay}" Width="*" MinWidth="135"/>
-                                                <DataGridTextColumn Header="Trùng" Binding="{Binding MatchReason, Mode=OneWay}" Width="130"/>
-                                                <DataGridTextColumn Header="Cảnh báo" Binding="{Binding RiskSummary, Mode=OneWay}" Width="2*" MinWidth="240"/>
-                                            </DataGrid.Columns>
-                                        </DataGrid>
-                                        <!-- Inline snapshot: the Staff can assess the matched reader without navigating away. -->
-                                        <Border CornerRadius="7" BorderThickness="1" BorderBrush="#DAD0E8"
-                                            Padding="12" Margin="0,9,0,0">
-                                            <Border.Style>
-                                                <Style TargetType="Border">
-                                                    <Setter Property="Background" Value="#F0F1F5"/>
-                                                    <Style.Triggers>
-                                                        <DataTrigger Binding="{Binding SelectedIdentityMatch.RiskLevel}" Value="red">
-                                                            <Setter Property="Background" Value="#FFE5E5"/>
-                                                        </DataTrigger>
-                                                        <DataTrigger Binding="{Binding SelectedIdentityMatch.RiskLevel}" Value="blocked">
-                                                            <Setter Property="Background" Value="#FFD6D6"/>
-                                                        </DataTrigger>
-                                                        <DataTrigger Binding="{Binding SelectedIdentityMatch.RiskLevel}" Value="yellow">
-                                                            <Setter Property="Background" Value="#FFF3C8"/>
-                                                        </DataTrigger>
-                                                        <DataTrigger Binding="{Binding SelectedIdentityMatch.RiskLevel}" Value="green">
-                                                            <Setter Property="Background" Value="#E1F5E9"/>
-                                                        </DataTrigger>
-                                                    </Style.Triggers>
-                                                </Style>
-                                            </Border.Style>
-                                            <StackPanel>
-                                                <TextBlock Text="THÔNG TIN HỒ SƠ ĐƯỢC CHỌN" FontWeight="Bold" Foreground="#463361"/>
-                                                <TextBlock Text="{Binding SelectedIdentityMatch.Summary, Mode=OneWay, TargetNullValue='Chưa chọn hồ sơ trùng'}"
-                                                       FontWeight="SemiBold" FontSize="14" Margin="0,6,0,3"/>
-                                                <TextBlock Text="{Binding SelectedIdentityMatch.AccountStatus, Mode=OneWay}"
-                                                       Foreground="#675B73" FontSize="12" Margin="0,0,0,5"/>
-                                                <TextBlock Text="{Binding SelectedIdentityMatch.RiskSummary, Mode=OneWay}"
-                                                       Foreground="#852D42" TextWrapping="Wrap" FontSize="12"/>
-                                            </StackPanel>
-                                        </Border>
-                                        <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
-                                            <Button Command="{Binding OpenIdentityDetailCommand}"
-                                                Content="XEM HỒ SƠ &amp; LỊCH SỬ" Width="210" Height="37"
-                                                Background="#594390" Foreground="White" BorderThickness="0"/>
-                                            <Button Command="{Binding UseMatchedReaderCommand}"
-                                                Content="DÙNG HỒ SƠ ĐÃ CÓ" Width="180" Height="37"
-                                                Margin="10,0,0,0" Background="#287C67"
-                                                Foreground="White" BorderThickness="0"/>
+                                        <DataGrid.Columns>
+                                            <DataGridTextColumn Header="Mã" Binding="{Binding ReaderCode, Mode=OneWay}" Width="95" MinWidth="80" />
+                                            <DataGridTextColumn Header="Họ tên" Binding="{Binding FullName, Mode=OneWay}" Width="2*" MinWidth="135" />
+                                            <DataGridTextColumn Header="Cảnh báo" Binding="{Binding RiskSummary, Mode=OneWay}" Width="2*" MinWidth="155" />
+                                        </DataGrid.Columns>
+                                    </DataGrid>
+                                    <Border Padding="10" Margin="0,8,0,9" CornerRadius="6" BorderThickness="1" BorderBrush="#DAD0E8">
+                                        <Border.Style>
+                                            <Style TargetType="Border">
+                                                <Setter Property="Background" Value="#F0F1F5"/>
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding SelectedIdentityMatch.RiskLevel}" Value="red">
+                                                        <Setter Property="Background" Value="#FFE5E5"/>
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding SelectedIdentityMatch.RiskLevel}" Value="blocked">
+                                                        <Setter Property="Background" Value="#FFD6D6"/>
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding SelectedIdentityMatch.RiskLevel}" Value="yellow">
+                                                        <Setter Property="Background" Value="#FFF3C8"/>
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding SelectedIdentityMatch.RiskLevel}" Value="green">
+                                                        <Setter Property="Background" Value="#E1F5E9"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Border.Style>
+                                        <StackPanel>
+                                            <TextBlock Text="{Binding SelectedIdentityMatch.Summary, TargetNullValue='Chưa chọn hồ sơ'}"
+                                                       FontWeight="SemiBold" Foreground="#463361" TextWrapping="Wrap" />
+                                            <TextBlock Text="{Binding SelectedIdentityMatch.RiskSummary, Mode=OneWay}"
+                                                       Foreground="#8D283F" FontSize="12" TextWrapping="Wrap" Margin="0,4,0,0"/>
                                         </StackPanel>
-                                        <TextBlock Text="CCCD được xóa khỏi ô nhập sau khi tra cứu; không ghi vào file/log. Trùng SĐT có thể là SĐT dùng chung; Staff phải xác minh danh tính thực tế trước khi dùng hồ sơ. Chưa có chức năng tạo Guest trong nhóm này."
-                                               Foreground="#796C89" FontSize="11" TextWrapping="Wrap" Margin="0,10,0,0" />
+                                    </Border>
+                                    <Button Content="XEM HỒ SƠ &amp; LỊCH SỬ" Command="{Binding OpenIdentityDetailCommand}"
+                                            Height="35" Background="#594390" Foreground="White" BorderThickness="0" Margin="0,0,0,7"/>
+                                    <Button Content="DÙNG HỒ SƠ ĐÃ CHỌN" Command="{Binding UseMatchedReaderCommand}"
+                                            Height="35" Background="#287C67" Foreground="White" BorderThickness="0" />
+                                    <TextBlock Text="Đã xác nhận hồ sơ cũ để lập đơn" FontWeight="SemiBold" Foreground="#287C67"
+                                               Visibility="{Binding WalkInExistingConfirmed, Converter={StaticResource BoolVisibility}}"
+                                               Margin="0,8,0,0"/>
+                                </StackPanel>
+
+                                <!-- MODE B: create a new Guest after no duplicate and real identity verification. -->
+                                <StackPanel Visibility="{Binding WalkInNewMode, Converter={StaticResource BoolVisibility}}">
+                                    <TextBlock Text="THÔNG TIN HỒ SƠ GUEST MỚI" FontWeight="Bold"
+                                               Foreground="#246A4E" Margin="0,2,0,9" />
+                                    <TextBlock Text="Họ tên khách" FontWeight="SemiBold"/>
+                                    <TextBox Text="{Binding WalkInFullName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                             Height="36" Padding="8,6" MaxLength="200" Margin="0,5,0,8" />
+                                    <TextBlock Text="Chỉ tạo khi kiểm tra không có hồ sơ trùng. Nếu trùng, chuyển sang HỒ SƠ CŨ. Guest sẽ có mã guest00001... và không đăng nhập được."
+                                               TextWrapping="Wrap" Foreground="#567667" FontSize="12"/>
+                                </StackPanel>
+                                <CheckBox IsChecked="{Binding WalkInVerified, Mode=TwoWay}"
+                                          Content="Đã kiểm tra giấy tờ gốc hoặc xác minh SĐT trực tiếp"
+                                          FontWeight="SemiBold" Foreground="#246A4E"
+                                          Margin="0,13,0,0" />
+                                <TextBlock Text="Không đưa CCCD vào nhật ký hoặc ảnh chụp màn hình."
+                                           TextWrapping="Wrap" Foreground="#796C89" FontSize="11" Margin="0,7,0,0"/>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- RIGHT: Shared pending request/cart without physical-copy assignment. -->
+                        <Border Grid.Column="2" Background="White" BorderBrush="#D7E9DD" BorderThickness="1"
+                                CornerRadius="9" Padding="14" VerticalAlignment="Top">
+                            <StackPanel>
+                                <TextBlock Text="BƯỚC 2 · SÁCH CẦN MƯỢN" Foreground="#246A4E"
+                                           FontWeight="Bold" FontSize="15" Margin="0,0,0,6" />
+                                <TextBlock Text="Gõ tên sách, chọn gợi ý; không cần mã cuốn để gửi yêu cầu."
+                                           FontSize="12" Foreground="#627569" TextWrapping="Wrap" Margin="0,0,0,9"/>
+                                <TextBox Text="{Binding CopyQuery, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                         Padding="8,6" Height="36" MaxLength="80" Margin="0,0,0,7"/>
+                                <ListBox ItemsSource="{Binding BookSuggestions, Mode=OneWay}"
+                                         SelectedItem="{Binding WalkInSelectedBook, Mode=TwoWay}"
+                                         Background="White" BorderBrush="#CCE0D3" Height="107">
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate>
+                                            <StackPanel Margin="5,3">
+                                                <TextBlock Text="{Binding Title, Mode=OneWay}" FontWeight="SemiBold"/>
+                                                <TextBlock Text="{Binding Metadata, Mode=OneWay}" FontSize="11" Foreground="#61756A"/>
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                                <DockPanel Margin="0,9,0,9">
+                                    <Button DockPanel.Dock="Right" Content="+ THÊM SÁCH" Command="{Binding WalkInAddBookCommand}"
+                                            Background="#278565" Foreground="White" BorderThickness="0" Padding="14,6"/>
+                                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                        <TextBlock Text="Số ngày" VerticalAlignment="Center" FontWeight="SemiBold" Margin="0,0,8,0"/>
+                                        <TextBox Text="{Binding WalkInDays, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                 Height="34" Width="53" Padding="5" MaxLength="3"/>
                                     </StackPanel>
-                                </Border>
+                                </DockPanel>
+                                <TextBlock Text="GIỎ SÁCH (TỐI ĐA 5 ĐẦU SÁCH)" FontWeight="Bold"
+                                           Foreground="#246A4E" Margin="0,3,0,7"/>
+                                <DataGrid ItemsSource="{Binding WalkInCart, Mode=OneWay}"
+                                          SelectedItem="{Binding WalkInSelectedCartItem, Mode=TwoWay}"
+                                          IsReadOnly="True" AutoGenerateColumns="False" CanUserAddRows="False"
+                                          Height="132" Background="White" ScrollViewer.HorizontalScrollBarVisibility="Auto">
+                                    <DataGrid.Columns>
+                                        <DataGridTextColumn Header="Tên sách" Binding="{Binding Title, Mode=OneWay}" Width="3*" MinWidth="170"/>
+                                        <DataGridTextColumn Header="Ngày" Binding="{Binding RequestedDays, Mode=OneWay}" Width="*" MinWidth="55"/>
+                                    </DataGrid.Columns>
+                                </DataGrid>
+                                <Button Content="BỎ SÁCH ĐÃ CHỌN" Command="{Binding WalkInRemoveBookCommand}"
+                                        HorizontalAlignment="Left" Width="165" Height="30" Margin="0,7,0,8"/>
+                                <TextBlock Text="Ghi chú đơn" FontWeight="SemiBold"/>
+                                <TextBox Text="{Binding WalkInNote, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                         Padding="8,6" Height="35" MaxLength="500" Margin="0,5,0,12"/>
+                                <Button Content="GỬI ĐƠN TẠI QUẦY · CHỜ DUYỆT" Command="{Binding WalkInSubmitCommand}"
+                                        Height="42" Background="#216F54" Foreground="White" BorderThickness="0" FontWeight="Bold"/>
+                                <Button Content="HỦY VÀ XÓA DỮ LIỆU KHÁCH TRÊN FORM" Command="{Binding WalkInClearCommand}"
+                                        Margin="0,8,0,0" Height="34" Foreground="#526A5B" Background="#F5F9F6"/>
+                                <TextBlock Text="Tạo Guest mới và đơn cùng một giao dịch. Chưa giao sách cho đến khi Staff/Admin duyệt."
+                                           Foreground="#617569" FontSize="11" TextWrapping="Wrap" Margin="0,9,0,0"/>
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+
+                    <!-- Legacy one-copy immediate checkout remains available but is COLLAPSED. -->
+                    <Expander Header="MƯỢN TRỰC TIẾP BẰNG MÃ CUỐN (NGHIỆP VỤ CŨ)"
+                                  Visibility="{Binding WalkInExistingMode, Converter={StaticResource BoolVisibility}}"
+                                  IsExpanded="False" Margin="0,15,0,0" Background="White"
+                                  Foreground="#4B3972" FontWeight="SemiBold">
+                        <Border BorderBrush="#E0D8EE" BorderThickness="1" CornerRadius="8"
+                                    Background="White" Padding="16" Margin="0,7,0,0">
+                            <StackPanel>
+                                <TextBlock Text="Chỉ dùng cho Reader đã có tài khoản và cuốn vật lý. Mặc định nên tạo đơn chờ duyệt ở bên trên."
+                                               TextWrapping="Wrap" Foreground="#786B87" Margin="0,0,0,12" />
                                 <TextBlock Text="Tìm độc giả theo tên, username hoặc mã độc giả" FontWeight="SemiBold"/>
                                 <TextBox x:Name="LoanReaderSearchInput" Text="{Binding ReaderUsername, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Height="36" Padding="9,6" Margin="0,5,0,5" MaxLength="100" ToolTip="Gõ tên/username/mã độc giả; chọn một gợi ý xổ xuống."/>
                                 <Popup PlacementTarget="{Binding ElementName=LoanReaderSearchInput}" Placement="Bottom" StaysOpen="False" AllowsTransparency="True" PopupAnimation="Fade" IsOpen="{Binding ShowReaderSuggestions, Mode=TwoWay}">
@@ -591,11 +685,46 @@
                                 </Grid>
                                 <Button Command="{Binding CheckoutCommand}" Content="TẠO PHIẾU TRỰC TIẾP (HIỆN CÓ)" Background="#287C67" Foreground="White" BorderThickness="0" Height="42" HorizontalAlignment="Left" Width="200"/>
                                 <TextBlock Text="Giới hạn cuốn và ngày mượn lấy từ hạng độc giả; API kiểm tra lại trước khi lưu." TextWrapping="Wrap" Foreground="#796A8E" FontSize="12" Margin="0,12,0,0"/>
+
                             </StackPanel>
                         </Border>
+                    </Expander>
+
+                </StackPanel>
+            </DataTemplate>
+            <DataTemplate DataType="{x:Type vm:WalkInCounterPage}">
+                <ContentControl Content="{Binding Loans}" ContentTemplate="{StaticResource WalkInCounterTemplate}"
+                                HorizontalContentAlignment="Stretch" />
+            </DataTemplate>
+
+            <!-- Borrow / return uses existing MainWindow shell; VM is in MainViewModel.cs. -->
+            <DataTemplate DataType="{x:Type vm:BorrowReturnViewModel}">
+                <StackPanel Margin="0,0,0,20">
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                        <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE8F1;" FontSize="25"
+                               Foreground="#6951A1" Margin="0,0,13,0" />
+                        <TextBlock Text="LỊCH SỬ MƯỢN / TRẢ SÁCH" FontSize="27" FontWeight="Bold"
+                               Foreground="#35294D" />
                     </StackPanel>
-
-
+                    <TextBlock Text="Theo dõi sách đã giao và ghi nhận trả cuốn. Tiếp nhận khách nằm ở màn riêng."
+                           FontSize="12" Foreground="#796A8E" Margin="0,0,0,13" />
+                    <Border Background="#F0EBF8" BorderBrush="#D7CBEB" BorderThickness="1"
+                        CornerRadius="7" Padding="12" Margin="0,0,0,12">
+                        <DockPanel>
+                            <TextBlock DockPanel.Dock="Left" FontFamily="Segoe MDL2 Assets" Text="&#xE946;"
+                                   Foreground="#6951A1" FontSize="17" Margin="0,0,10,0" />
+                            <TextBlock Text="{Binding Message, Mode=OneWay}" TextWrapping="Wrap"
+                                   Foreground="#514074" />
+                        </DockPanel>
+                    </Border>
+                    <Button Command="{Binding RefreshCommand}" Height="38" Width="190"
+                        Background="#6951A1" Foreground="White" BorderThickness="0"
+                        HorizontalAlignment="Left" Margin="0,0,0,16">
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                            <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE72C;" Margin="0,0,8,0" />
+                            <TextBlock Text="LÀM MỚI PHIẾU MƯỢN" />
+                        </StackPanel>
+                    </Button>
 
                     <!-- Reader: submitted/pending/approved/rejected/cancelled requests (not yet physical loans). -->
                     <ContentControl Content="{Binding DataContext.Requests, RelativeSource={RelativeSource AncestorType={x:Type Window}}}"
@@ -817,9 +946,12 @@
                         <Button Style="{StaticResource SideButton}" Content="★ DUYỆT ĐƠN MƯỢN"
                                 Command="{Binding RequestsCommand}"
                                 ToolTip="Danh sách yêu cầu Reader gửi; xem hồ sơ, duyệt hoặc từ chối." />
-                        <Button Style="{StaticResource SideButton}" Content="NHẬN TRẢ / LỊCH SỬ"
+                        <Button Style="{StaticResource SideButton}" Content="TIẾP NHẬN TẠI QUẦY"
+                                Command="{Binding CounterCommand}"
+                                ToolTip="Chuyển Hồ sơ cũ / Guest mới và tạo đơn tại quầy." />
+                        <Button Style="{StaticResource SideButton}" Content="LỊCH SỬ / TRẢ SÁCH"
                                 Command="{Binding LoansCommand}"
-                                ToolTip="Xem phiếu mượn thực tế và nhận trả theo từng cuốn." />
+                                ToolTip="Chỉ xem lịch sử phiếu mượn và ghi nhận trả cuốn." />
                     </StackPanel>
                     <StackPanel Visibility="{Binding IsAdmin, Converter={StaticResource BoolVisibility}}">
                         <TextBlock Text="QUẢN TRỊ" Foreground="#BAABD6" Margin="12,24,0,8" FontSize="11" />

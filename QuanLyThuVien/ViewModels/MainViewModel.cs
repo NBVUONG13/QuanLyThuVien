@@ -13,6 +13,7 @@ namespace QuanLyThuVien.ViewModels
         private readonly string _token;
         private readonly AuthApiClient _auth = new AuthApiClient();
         private object _currentPage;
+        private object _readerDetailReturnPage;
         private string _username = "", _role = "", _status = "Đang xác minh phiên...";
         private bool _authenticated, _loggingOut;
 
@@ -27,11 +28,13 @@ namespace QuanLyThuVien.ViewModels
             StaffCommand = new AsyncCommand(_ => NavigateStaffAsync(), _ => IsAdmin);
             ReaderCommand = new AsyncCommand(_ => NavigateReadersAsync(), _ => IsAuthenticated);
             LoansCommand = new AsyncCommand(_ => NavigateLoansAsync(), _ => IsAuthenticated);
+            CounterCommand = new AsyncCommand(_ => NavigateCounterAsync(), _ => CanManage);
             RequestsCommand = new AsyncCommand(_ => NavigateRequestsAsync(), _ => IsAuthenticated);
             LogoutCommand = new AsyncCommand(_ => LogoutAsync());
             BackFromReaderDetailsCommand = new ActionCommand(_ =>
             {
-                if (ReaderPanel != null) CurrentPage = ReaderPanel;
+                if (ReaderPanel != null) CurrentPage = _readerDetailReturnPage ?? ReaderPanel;
+                _readerDetailReturnPage = null;
             });
             PendingCommand = new ActionCommand(p =>
             {
@@ -45,6 +48,7 @@ namespace QuanLyThuVien.ViewModels
         public HRManagementViewModel Staff { get; private set; }
         public ReaderManagementViewModel ReaderPanel { get; private set; }
         public BorrowReturnViewModel Loans { get; private set; }
+        public WalkInCounterPage CounterPage { get; private set; }
         public BorrowRequestViewModel Requests { get; private set; }
         public object CurrentPage { get => _currentPage; private set => Set(ref _currentPage, value); }
         public string Username { get => _username; private set => Set(ref _username, value); }
@@ -60,6 +64,7 @@ namespace QuanLyThuVien.ViewModels
         public ICommand StaffCommand { get; }
         public ICommand ReaderCommand { get; }
         public ICommand LoansCommand { get; }
+        public ICommand CounterCommand { get; }
         public ICommand RequestsCommand { get; }
         public ICommand LogoutCommand { get; }
         public ICommand PendingCommand { get; }
@@ -85,6 +90,7 @@ namespace QuanLyThuVien.ViewModels
             (StaffCommand as AsyncCommand)?.Refresh();
             (ReaderCommand as AsyncCommand)?.Refresh();
             (LoansCommand as AsyncCommand)?.Refresh();
+            (CounterCommand as AsyncCommand)?.Refresh();
             (RequestsCommand as AsyncCommand)?.Refresh();
 
             // Reuse one BookManagementViewModel for all browsing/search/metadata/copies work.
@@ -98,9 +104,10 @@ namespace QuanLyThuVien.ViewModels
                 CurrentPage = new ReaderDetailPage(ReaderPanel, BackFromReaderDetailsCommand);
             };
             Loans = new BorrowReturnViewModel(_token, Role);
-            Loans.IdentityDetailRequested += username => { _ = OpenRequestReaderAsync(username); };
+            CounterPage = new WalkInCounterPage(Loans);
+            Loans.IdentityDetailRequested += username => { _ = OpenRequestReaderAsync(username, CounterPage); };
             Requests = new BorrowRequestViewModel(_token, Role);
-            Requests.ReaderDetailRequested += username => { _ = OpenRequestReaderAsync(username); };
+            Requests.ReaderDetailRequested += username => { _ = OpenRequestReaderAsync(username, Requests); };
             Status = "Đã xác thực phiên: " + Username + " (" + Role + ")";
 
             // Open the bookstore-style home page immediately after login.
@@ -123,9 +130,10 @@ namespace QuanLyThuVien.ViewModels
             }
         }
 
-        private async Task OpenRequestReaderAsync(string username)
+        private async Task OpenRequestReaderAsync(string username, object returnPage)
         {
             if (!CanManage || ReaderPanel == null || string.IsNullOrWhiteSpace(username)) return;
+            _readerDetailReturnPage = returnPage;
             ReaderPanel.Query = username;
             await ReaderPanel.LoadAsync();
             foreach (var r in ReaderPanel.Readers)
@@ -165,8 +173,16 @@ namespace QuanLyThuVien.ViewModels
         private async Task NavigateReadersAsync()
         {
             if (!IsAuthenticated || ReaderPanel == null) return;
+            _readerDetailReturnPage = null;
             CurrentPage = ReaderPanel;
             await ReaderPanel.LoadAsync();
+        }
+
+        private Task NavigateCounterAsync()
+        {
+            if (!CanManage || CounterPage == null) return Task.CompletedTask;
+            CurrentPage = CounterPage;
+            return Task.CompletedTask;
         }
 
         private async Task NavigateLoansAsync()
@@ -195,6 +211,17 @@ namespace QuanLyThuVien.ViewModels
             try { await _auth.LogoutAsync(_token); }
             finally { LogoutRequested?.Invoke(this, EventArgs.Empty); }
         }
+    }
+
+    // Dedicated counter navigation page, reusing the EXISTING BorrowReturnViewModel.
+    // No duplicate ViewModel, service or new XAML view is added to the WPF project.
+    public sealed class WalkInCounterPage
+    {
+        public WalkInCounterPage(BorrowReturnViewModel loans)
+        {
+            Loans = loans ?? throw new ArgumentNullException(nameof(loans));
+        }
+        public BorrowReturnViewModel Loans { get; }
     }
 
     // Navigation state for Views/ReaderDetailView.xaml (one real page, no duplicate API logic).
@@ -532,6 +559,63 @@ namespace QuanLyThuVien.ViewModels
             "Nhập đủ SĐT hoặc 12 số CCCD để kiểm tra hồ sơ cũ.";
         private bool _identityBusy, _identityConflict;
         private ReaderIdentityMatch _selectedIdentityMatch;
+        private string _walkInFullName = "", _walkInNote = "", _walkInDays = "14";
+        private bool _walkInVerified, _identityChecked;
+        private bool _walkInExistingMode = true, _walkInExistingConfirmed;
+        public bool WalkInExistingMode => _walkInExistingMode;
+        public bool WalkInNewMode => !_walkInExistingMode;
+        public bool WalkInExistingConfirmed
+        {
+            get => _walkInExistingConfirmed;
+            private set => Set(ref _walkInExistingConfirmed, value);
+        }
+        public ICommand ShowExistingWalkInCommand { get; }
+        public ICommand ShowNewWalkInCommand { get; }
+
+        private void ChangeWalkInMode(bool existing)
+        {
+            if (!CanManage || Busy || _walkInExistingMode == existing) return;
+            _walkInExistingMode = existing;
+            Notify(nameof(WalkInExistingMode));
+            Notify(nameof(WalkInNewMode));
+            WalkInExistingConfirmed = false;
+            WalkInVerified = false;
+            if (existing) WalkInFullName = "";
+            else SelectedIdentityMatch = null;
+            Message = existing
+                ? "Chế độ hồ sơ cũ: tra cứu, kiểm tra lịch sử, chọn hồ sơ rồi mới gửi đơn."
+                : "Chế độ hồ sơ mới: kiểm tra không trùng và xác minh trực tiếp trước khi gửi đơn.";
+        }
+        private LoanBookSuggestion _walkInSelectedBook;
+        private BorrowRequestCartItem _walkInSelectedCartItem;
+        public ObservableCollection<BorrowRequestCartItem> WalkInCart { get; } =
+            new ObservableCollection<BorrowRequestCartItem>();
+        public string WalkInFullName { get => _walkInFullName; set => Set(ref _walkInFullName, value); }
+        public string WalkInNote { get => _walkInNote; set => Set(ref _walkInNote, value); }
+        public string WalkInDays { get => _walkInDays; set => Set(ref _walkInDays, value); }
+        public bool WalkInVerified { get => _walkInVerified; set => Set(ref _walkInVerified, value); }
+        public LoanBookSuggestion WalkInSelectedBook
+        {
+            get => _walkInSelectedBook;
+            set
+            {
+                if (Set(ref _walkInSelectedBook, value))
+                    (WalkInAddBookCommand as ActionCommand)?.Refresh();
+            }
+        }
+        public BorrowRequestCartItem WalkInSelectedCartItem
+        {
+            get => _walkInSelectedCartItem;
+            set
+            {
+                if (Set(ref _walkInSelectedCartItem, value))
+                    (WalkInRemoveBookCommand as ActionCommand)?.Refresh();
+            }
+        }
+        public ICommand WalkInAddBookCommand { get; }
+        public ICommand WalkInRemoveBookCommand { get; }
+        public ICommand WalkInSubmitCommand { get; }
+        public ICommand WalkInClearCommand { get; }
 
 
         public BorrowReturnViewModel(string token, string role)
@@ -539,6 +623,8 @@ namespace QuanLyThuVien.ViewModels
             _token = token;
             CanManage = role == "Staff" || role == "Admin";
             IsReader = role == "Reader";
+            ShowExistingWalkInCommand = new ActionCommand(_ => ChangeWalkInMode(true), _ => CanManage && !Busy);
+            ShowNewWalkInCommand = new ActionCommand(_ => ChangeWalkInMode(false), _ => CanManage && !Busy);
             CheckIdentityCommand = new AsyncCommand(_ => CheckIdentityAsync(++_identityVersion), _ => CanManage && !_identityBusy);
             OpenIdentityDetailCommand = new ActionCommand(_ =>
             {
@@ -548,12 +634,15 @@ namespace QuanLyThuVien.ViewModels
             UseMatchedReaderCommand = new ActionCommand(_ =>
             {
                 var match = SelectedIdentityMatch;
-                if (!CanManage || match == null || IdentityConflict || match.AccountStatus != "active" ||
+                if (!CanManage || !WalkInExistingMode || !_identityChecked || IdentityBusy || match == null ||
+                    IdentityConflict || match.AccountStatus != "active" ||
                     match.BorrowBlocked || match.OverdueCopies > 0) return;
                 ReaderUsername = match.Username;
+                WalkInExistingConfirmed = true;
                 IdentityMessage = "Đã chọn hồ sơ cũ: " + match.FullName +
                     ". Staff cần xác minh danh tính trực tiếp trước khi tiếp nhận.";
-            }, _ => CanManage && SelectedIdentityMatch != null && !IdentityConflict &&
+            }, _ => CanManage && WalkInExistingMode && _identityChecked && !IdentityBusy &&
+                  SelectedIdentityMatch != null && !IdentityConflict &&
                   SelectedIdentityMatch.AccountStatus == "active" &&
                   !SelectedIdentityMatch.BorrowBlocked && SelectedIdentityMatch.OverdueCopies == 0);
 
@@ -562,6 +651,19 @@ namespace QuanLyThuVien.ViewModels
             CheckoutCommand = new AsyncCommand(_ => CheckoutAsync(), _ => CanManage && !Busy);
             ReturnCommand = new AsyncCommand(_ => ReturnAsync(),
                 _ => CanManage && !Busy && SelectedLoan != null && SelectedLoan.IsOpen);
+            WalkInAddBookCommand = new ActionCommand(_ => AddWalkInBook(),
+                _ => CanManage && WalkInSelectedBook != null && WalkInCart.Count < 5);
+            WalkInRemoveBookCommand = new ActionCommand(_ =>
+            {
+                if (WalkInSelectedCartItem == null) return;
+                WalkInCart.Remove(WalkInSelectedCartItem);
+                WalkInSelectedCartItem = null;
+                (WalkInAddBookCommand as ActionCommand)?.Refresh();
+            }, _ => CanManage && WalkInSelectedCartItem != null);
+            WalkInSubmitCommand = new AsyncCommand(_ => SubmitWalkInAsync(),
+                _ => CanManage && !Busy && WalkInCart.Count > 0);
+            WalkInClearCommand = new ActionCommand(_ => ClearWalkInForm(), _ => CanManage && !Busy);
+
         }
         public event Action<string> IdentityDetailRequested;
         public ObservableCollection<ReaderIdentityMatch> IdentityMatches { get; } =
@@ -585,6 +687,7 @@ namespace QuanLyThuVien.ViewModels
             set
             {
                 if (!Set(ref _selectedIdentityMatch, value)) return;
+                WalkInExistingConfirmed = false;
                 (OpenIdentityDetailCommand as ActionCommand)?.Refresh();
                 (UseMatchedReaderCommand as ActionCommand)?.Refresh();
             }
@@ -694,6 +797,9 @@ namespace QuanLyThuVien.ViewModels
                 (SearchAvailableCommand as AsyncCommand)?.Refresh();
                 (CheckoutCommand as AsyncCommand)?.Refresh();
                 (ReturnCommand as AsyncCommand)?.Refresh();
+                (WalkInSubmitCommand as AsyncCommand)?.Refresh();
+                (ShowExistingWalkInCommand as ActionCommand)?.Refresh();
+                (ShowNewWalkInCommand as ActionCommand)?.Refresh();
             }
         }
         public LoanItem SelectedLoan
@@ -723,9 +829,100 @@ namespace QuanLyThuVien.ViewModels
         public ICommand CheckoutCommand { get; }
         public ICommand ReturnCommand { get; }
 
+        private void ClearWalkInForm()
+        {
+            ++_identityVersion; // Cancel any in-flight identity suggestion response.
+            _identityChecked = false;
+            WalkInExistingConfirmed = false;
+            _identityCitizen = ""; Notify(nameof(IdentityCitizen));
+            _identityPhone = ""; Notify(nameof(IdentityPhone));
+            IdentityMatches.Clear(); SelectedIdentityMatch = null;
+            IdentityConflict = false;
+            WalkInFullName = ""; WalkInNote = ""; WalkInVerified = false;
+            WalkInCart.Clear(); WalkInSelectedCartItem = null; WalkInSelectedBook = null;
+            IdentityMessage = "Đã xóa SĐT/CCCD trong form. Cần tra cứu lại khi tiếp nhận khách.";
+            Message = "Đã hủy nhập đơn tại quầy; chưa có đơn nào được ghi.";
+            (WalkInSubmitCommand as AsyncCommand)?.Refresh();
+            (WalkInAddBookCommand as ActionCommand)?.Refresh();
+        }
+
+        private void AddWalkInBook()
+        {
+            var book = WalkInSelectedBook;
+            if (!CanManage || book == null) return;
+            int days;
+            if (!int.TryParse(WalkInDays, out days) || days < 1 || days > 90)
+            { Message = "Số ngày mượn phải từ 1 đến 90."; return; }
+            if (WalkInCart.Count >= 5) { Message = "Một đơn chỉ tối đa 5 đầu sách."; return; }
+            if (WalkInCart.Any(x => x.BookId == book.BookId))
+            { Message = "Sách này đã nằm trong đơn tại quầy."; return; }
+            WalkInCart.Add(new BorrowRequestCartItem
+            {
+                BookId = book.BookId,
+                Title = book.Title,
+                Authors = book.Authors,
+                RequestedDays = days,
+                AvailableCopies = book.AvailableCopies
+            });
+            Message = "Đã thêm sách vào đơn tại quầy. Chưa gửi yêu cầu.";
+            (WalkInAddBookCommand as ActionCommand)?.Refresh();
+            (WalkInSubmitCommand as AsyncCommand)?.Refresh();
+        }
+
+        private async Task SubmitWalkInAsync()
+        {
+            if (!CanManage || Busy) return;
+            if (!_identityChecked || IdentityBusy)
+            { Message = "Phải chờ KIỂM TRA TRÙNG SĐT/CCCD hoàn tất trước khi lập đơn."; return; }
+            if (IdentityConflict || IdentityMatches.Count > 1)
+            { Message = "Có xung đột danh tính; không được tự chọn hoặc tạo Guest."; return; }
+            var selected = SelectedIdentityMatch;
+            if (WalkInExistingMode && (selected == null || !WalkInExistingConfirmed))
+            { Message = "Chọn hồ sơ cũ và bấm DÙNG HỒ SƠ NÀY trước khi gửi đơn."; return; }
+            if (WalkInNewMode && (IdentityMatches.Count != 0 || selected != null))
+            { Message = "Thông tin đã trùng hồ sơ. Chuyển sang HỒ SƠ CŨ để kiểm tra và dùng lại."; return; }
+            if (IdentityMatches.Count == 1 && selected == null)
+            { Message = "Đã có hồ sơ trùng. Chọn hồ sơ và XEM LỊCH SỬ trước khi dùng lại."; return; }
+            if (selected != null && (selected.AccountStatus != "active" || selected.BorrowBlocked ||
+                                   selected.OverdueCopies > 0))
+            { Message = "Hồ sơ cũ đang bị hạn chế; xem lịch sử trước khi tiếp nhận."; return; }
+            if (selected == null && (string.IsNullOrWhiteSpace(WalkInFullName) || WalkInFullName.Trim().Length < 2))
+            { Message = "Nhập họ tên khách mới trước khi lập đơn."; return; }
+            if (!WalkInVerified)
+            { Message = "Staff phải xác nhận đã kiểm tra giấy tờ gốc hoặc quyền sở hữu SĐT thực tế."; return; }
+            if (WalkInCart.Count < 1)
+            { Message = "Thêm ít nhất một đầu sách vào giỏ."; return; }
+            Busy = true;
+            try
+            {
+                var lines = WalkInCart.Select(x => new BorrowRequestLine
+                {
+                    BookId = x.BookId,
+                    RequestedDays = x.RequestedDays
+                }).ToList();
+                var result = await _api.CreateWalkInRequestAsync(_token, selected?.UserId,
+                    WalkInFullName, IdentityPhone, IdentityCitizen, WalkInVerified, lines, WalkInNote);
+                Message = result?.Message ?? "Không gửi được đơn tại quầy.";
+                if (result == null || !result.IsSuccess) return;
+                WalkInCart.Clear(); WalkInSelectedCartItem = null; WalkInSelectedBook = null;
+                WalkInFullName = ""; WalkInNote = ""; WalkInVerified = false;
+                // Clear sensitive CCCD from the VM as soon as the transaction completes.
+                _identityCitizen = ""; Notify(nameof(IdentityCitizen));
+                _identityPhone = ""; Notify(nameof(IdentityPhone));
+                _identityChecked = false; IdentityMatches.Clear(); SelectedIdentityMatch = null;
+                WalkInExistingConfirmed = false;
+                (WalkInAddBookCommand as ActionCommand)?.Refresh();
+                Message += " Vào 'ĐƠN MƯỢN READER GỬI' để xem/xử lý cùng các đơn từ ứng dụng.";
+            }
+            catch (Exception) { Message = "Không tạo được đơn tại quầy. Kiểm tra API."; }
+            finally { Busy = false; (WalkInSubmitCommand as AsyncCommand)?.Refresh(); }
+        }
+
         private void ScheduleIdentityLookup()
         {
             int version = ++_identityVersion;
+            _identityChecked = false;
+            WalkInExistingConfirmed = false;
             IdentityMatches.Clear();
             SelectedIdentityMatch = null;
             IdentityConflict = false;
@@ -759,6 +956,8 @@ namespace QuanLyThuVien.ViewModels
                     IdentityMessage = "Nhập đúng 10 số SĐT (hoặc +84) và/hoặc 12 số CCCD. Chưa gửi tra cứu khi đang nhập dở.";
                 return;
             }
+            _identityChecked = false;
+            WalkInExistingConfirmed = false;
             IdentityBusy = true;
             if (version == _identityVersion) IdentityMessage = "Đang kiểm tra hồ sơ cũ...";
             try
@@ -771,6 +970,7 @@ namespace QuanLyThuVien.ViewModels
                 { IdentityMessage = result?.Message ?? "Lỗi tra cứu."; return; }
                 foreach (var match in result.Matches ?? new System.Collections.Generic.List<ReaderIdentityMatch>())
                     IdentityMatches.Add(match);
+                _identityChecked = true;
                 IdentityConflict = result.Conflict;
                 IdentityMessage = IdentityConflict
                     ? "⛔ XUNG ĐỘT SĐT/CCCD: không được tự ghép/chọn hồ sơ. Staff phải xác minh tại quầy."
@@ -785,8 +985,9 @@ namespace QuanLyThuVien.ViewModels
             {
                 if (version == _identityVersion)
                 {
-                    // Clear CCCD from UI after the lookup; do not retain it in a VM property.
-                    if (id.Length > 0) { _identityCitizen = ""; Notify(nameof(IdentityCitizen)); }
+                    // Held in this VM only until the Staff submits/clears intake;
+                    // never persisted by WPF. Needed for the create transaction to
+                    // re-check CCCD fingerprint against the exact same identifier.
                     IdentityBusy = false;
                     (UseMatchedReaderCommand as ActionCommand)?.Refresh();
                 }
