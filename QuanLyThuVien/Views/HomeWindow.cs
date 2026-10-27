@@ -12,6 +12,7 @@ namespace QuanLyThuVien.Views
     {
         private readonly AuthApiClient _authClient = new AuthApiClient();
         private readonly DashboardApiClient _dashboardClient = new DashboardApiClient();
+        private readonly BookCatalogApiClient _bookClient = new BookCatalogApiClient();
         private readonly StackPanel _menu = new StackPanel();
         private readonly StackPanel _main = new StackPanel();
         private readonly TextBlock _notice = new TextBlock { TextWrapping = TextWrapping.Wrap };
@@ -93,8 +94,8 @@ namespace QuanLyThuVien.Views
         {
             _menu.Children.Clear();
             AddMenu("Tổng quan", ShowDashboard);
-            AddMenu("Danh mục sách", () => ShowPending("Danh mục sách"));
-            AddMenu("Tìm kiếm sách", () => ShowPending("Tìm kiếm sách"));
+            AddMenu("Danh mục sách", () => ShowBooks(""));
+            AddMenu("Tìm kiếm sách", () => ShowBooks(""));
             if (_role == "Reader")
             {
                 AddMenu("Sách đang mượn", () => ShowPending("Sách đang mượn"));
@@ -134,6 +135,66 @@ namespace QuanLyThuVien.Views
                 Foreground = Brush("#475569"),
                 Margin = new Thickness(0, 0, 0, 24)
             });
+        }
+
+
+        private async void ShowBooks(string initialQuery)
+        {
+            Header("Danh mục & tìm kiếm sách");
+            var searchRow = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Margin = new Thickness(0, 0, 0, 12)
+            };
+            var keyword = new TextBox
+            {
+                Width = 300,
+                Height = 36,
+                Text = initialQuery ?? "",
+                Margin = new Thickness(0, 0, 10, 0),
+                Padding = new Thickness(8, 6, 8, 4)
+            };
+            var find = new Button { Content = "Tìm kiếm", Width = 105, Height = 36 };
+            searchRow.Children.Add(keyword);
+            searchRow.Children.Add(find);
+            _main.Children.Add(searchRow);
+            var status = new TextBlock { Foreground = Brush("#475569"), Margin = new Thickness(0, 4, 0, 10) };
+            _main.Children.Add(status);
+            var table = new DataGrid
+            {
+                AutoGenerateColumns = false,
+                IsReadOnly = true,
+                CanUserAddRows = false,
+                CanUserDeleteRows = false,
+                Height = 430,
+                HeadersVisibility = DataGridHeadersVisibility.Column,
+                Background = Brushes.White
+            };
+            table.Columns.Add(new DataGridTextColumn { Header = "Tên sách", Binding = new System.Windows.Data.Binding("Title"), Width = new DataGridLength(2, DataGridLengthUnitType.Star) });
+            table.Columns.Add(new DataGridTextColumn { Header = "Tác giả", Binding = new System.Windows.Data.Binding("Authors"), Width = new DataGridLength(2, DataGridLengthUnitType.Star) });
+            table.Columns.Add(new DataGridTextColumn { Header = "ISBN", Binding = new System.Windows.Data.Binding("Isbn"), Width = 140 });
+            table.Columns.Add(new DataGridTextColumn { Header = "Nhà XB", Binding = new System.Windows.Data.Binding("Publisher"), Width = 160 });
+            table.Columns.Add(new DataGridTextColumn { Header = "Năm", Binding = new System.Windows.Data.Binding("PublicationYear"), Width = 65 });
+            table.Columns.Add(new DataGridTextColumn { Header = "Số cuốn", Binding = new System.Windows.Data.Binding("PhysicalCopies"), Width = 75 });
+            _main.Children.Add(table);
+            async System.Threading.Tasks.Task LoadAsync()
+            {
+                find.IsEnabled = false;
+                status.Text = "Đang tải danh mục từ PostgreSQL...";
+                var result = await _bookClient.SearchAsync(_token, keyword.Text);
+                if (result.IsSuccess)
+                {
+                    table.ItemsSource = result.Books;
+                    status.Text = "Tìm thấy " + result.Books.Count + " đầu sách (tối đa 100 kết quả). Số cuốn là bản sao vật lý đã nhập.";
+                }
+                else status.Text = result.Message;
+                find.IsEnabled = true;
+            }
+            find.Click += async (s, e) => await LoadAsync();
+            keyword.KeyDown += async (s, e) => {
+                if (e.Key == System.Windows.Input.Key.Enter) await LoadAsync();
+            };
+            await LoadAsync();
         }
 
         private void ShowPending(string heading)
