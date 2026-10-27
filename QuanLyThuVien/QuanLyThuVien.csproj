@@ -122,6 +122,7 @@
     <Compile Include="Services\AuthService.cs" />
     <Compile Include="Services\AIService.cs" />
     <Compile Include="Services\BookCatalogApiClient.cs" />
+    <Compile Include="Services\BookDetailApiClient.cs" />
     <Compile Include="Services\CloudStorageService.cs" />
     <Compile Include="Services\DashboardApiClient.cs" />
     <Compile Include="Services\DataBackupService.cs" />

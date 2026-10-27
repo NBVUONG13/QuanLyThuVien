@@ -387,6 +387,133 @@ app.MapGet("/api/books", async (
     }
 });
 
+
+// Step 44: book detail is readable by logged-in roles. Copy changes require Staff/Admin.
+app.MapGet("/api/books/{bookId:long}/details", async (
+    long bookId, HttpRequest request, SessionService sessions,
+    IConfiguration config, CancellationToken ct) =>
+{
+    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    var session = sessions.Validate(ReadBearerToken(request));
+    if (session is null) return Results.Unauthorized();
+    if (session.Role is not ("Reader" or "Staff" or "Admin")) return Results.StatusCode(403);
+    try
+    {
+        await using var db = new NpgsqlConnection(config.GetConnectionString("AivenPostgres"));
+        await db.OpenAsync(ct);
+        const string sql = @"
+            SELECT b.book_id, b.title, COALESCE(b.isbn,''),
+                   COALESCE(b.description,''), COALESCE(p.name,''),
+                   COALESCE(b.publication_year,0),
+                   COALESCE((SELECT string_agg(a.name, ', ' ORDER BY a.name)
+                     FROM public.book_authors ba JOIN public.authors a ON ba.author_id=a.author_id
+                     WHERE ba.book_id=b.book_id),''),
+                   (SELECT COUNT(*) FROM public.book_copies c WHERE c.book_id=b.book_id),
+                   (SELECT COUNT(*) FROM public.book_copies c WHERE c.book_id=b.book_id
+                    AND c.condition_status='active')
+            FROM public.books b
+            LEFT JOIN public.publishers p ON p.publisher_id=b.publisher_id
+            WHERE b.book_id=@id AND b.is_visible=TRUE;";
+        await using var cmd = new NpgsqlCommand(sql, db);
+        cmd.Parameters.AddWithValue("id", bookId);
+        await using var r = await cmd.ExecuteReaderAsync(ct);
+        if (!await r.ReadAsync(ct)) return Results.NotFound();
+        return Results.Ok(new
+        {
+            bookId = r.GetInt64(0),
+            title = r.GetString(1),
+            isbn = r.GetString(2),
+            description = r.GetString(3),
+            publisher = r.GetString(4),
+            publicationYear = r.GetInt32(5),
+            authors = r.GetString(6),
+            totalCopies = r.GetInt64(7),
+            activeCopies = r.GetInt64(8)
+        });
+    }
+    catch (Exception e)
+    {
+        app.Logger.LogError("Book detail failed: {Type}", e.GetType().Name);
+        return Results.Json(new { message = "Khong the tai chi tiet sach." }, statusCode: 503);
+    }
+});
+
+app.MapGet("/api/books/{bookId:long}/copies", async (
+    long bookId, HttpRequest request, SessionService sessions,
+    IConfiguration config, CancellationToken ct) =>
+{
+    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    var session = sessions.Validate(ReadBearerToken(request));
+    if (session is null) return Results.Unauthorized();
+    if (session.Role is not ("Staff" or "Admin")) return Results.StatusCode(403);
+    try
+    {
+        await using var db = new NpgsqlConnection(config.GetConnectionString("AivenPostgres"));
+        await db.OpenAsync(ct);
+        const string sql = @"SELECT copy_id, copy_code, condition_status, COALESCE(shelf_location,'')
+                             FROM public.book_copies WHERE book_id=@id ORDER BY copy_code LIMIT 300;";
+        await using var cmd = new NpgsqlCommand(sql, db);
+        cmd.Parameters.AddWithValue("id", bookId);
+        await using var r = await cmd.ExecuteReaderAsync(ct);
+        var rows = new List<object>();
+        while (await r.ReadAsync(ct))
+            rows.Add(new
+            {
+                copyId = r.GetInt64(0),
+                copyCode = r.GetString(1),
+                conditionStatus = r.GetString(2),
+                shelfLocation = r.GetString(3)
+            });
+        return Results.Ok(new { copies = rows });
+    }
+    catch (Exception e)
+    {
+        app.Logger.LogError("Copy list failed: {Type}", e.GetType().Name);
+        return Results.Json(new { message = "Khong tai duoc ban sao." }, statusCode: 503);
+    }
+});
+
+app.MapPost("/api/books/{bookId:long}/copies", async (
+    long bookId, AddCopyRequest body, HttpRequest request, SessionService sessions,
+    IConfiguration config, CancellationToken ct) =>
+{
+    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    var session = sessions.Validate(ReadBearerToken(request));
+    if (session is null) return Results.Unauthorized();
+    if (session.Role is not ("Staff" or "Admin")) return Results.StatusCode(403);
+    var code = body.CopyCode?.Trim();
+    var shelf = body.ShelfLocation?.Trim();
+    if (string.IsNullOrWhiteSpace(code) || code.Length > 60 ||
+        (shelf?.Length ?? 0) > 120)
+        return Results.BadRequest(new { message = "Ma cuon 1-60 ky tu; ke sach toi da 120 ky tu." });
+    try
+    {
+        await using var db = new NpgsqlConnection(config.GetConnectionString("AivenPostgres"));
+        await db.OpenAsync(ct);
+        const string sql = @"
+            INSERT INTO public.book_copies(book_id,copy_code,condition_status,shelf_location)
+            SELECT book_id, @code, 'active', @shelf FROM public.books
+            WHERE book_id=@id AND is_visible=TRUE
+            RETURNING copy_id;";
+        await using var cmd = new NpgsqlCommand(sql, db);
+        cmd.Parameters.AddWithValue("id", bookId);
+        cmd.Parameters.AddWithValue("code", code);
+        cmd.Parameters.AddWithValue("shelf", (object?)shelf ?? DBNull.Value);
+        var id = await cmd.ExecuteScalarAsync(ct);
+        if (id is null) return Results.NotFound();
+        return Results.Created($"/api/books/{bookId}/copies", new { copyId = Convert.ToInt64(id), copyCode = code });
+    }
+    catch (PostgresException e) when (e.SqlState == PostgresErrorCodes.UniqueViolation)
+    {
+        return Results.Conflict(new { message = "Ma cuon da ton tai." });
+    }
+    catch (Exception e)
+    {
+        app.Logger.LogError("Copy create failed: {Type}", e.GetType().Name);
+        return Results.Json(new { message = "Khong the tao ban sao." }, statusCode: 503);
+    }
+});
+
 app.Run();
 
 // Du lieu JSON nhan tu WPF hoac Postman/PowerShell.
@@ -397,3 +524,5 @@ public sealed record RegisterStartRequest(
     string? Phone,
     string? Password);
 public sealed record RegisterConfirmRequest(Guid RequestId, string? Otp);
+
+public sealed record AddCopyRequest(string? CopyCode, string? ShelfLocation);

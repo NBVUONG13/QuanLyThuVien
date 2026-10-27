@@ -13,6 +13,7 @@ namespace QuanLyThuVien.Views
         private readonly AuthApiClient _authClient = new AuthApiClient();
         private readonly DashboardApiClient _dashboardClient = new DashboardApiClient();
         private readonly BookCatalogApiClient _bookClient = new BookCatalogApiClient();
+        private readonly BookDetailApiClient _detailClient = new BookDetailApiClient();
         private readonly StackPanel _menu = new StackPanel();
         private readonly StackPanel _main = new StackPanel();
         private readonly TextBlock _notice = new TextBlock { TextWrapping = TextWrapping.Wrap };
@@ -106,7 +107,7 @@ namespace QuanLyThuVien.Views
             {
                 AddMenu("Quản lý độc giả", () => ShowPending("Quản lý độc giả"));
                 AddMenu("Mượn / trả sách", () => ShowPending("Mượn / trả sách"));
-                AddMenu("Quản lý bản sao", () => ShowPending("Quản lý bản sao"));
+                AddMenu("Quản lý bản sao", () => ShowBooks(""));
             }
             if (_role == "Admin")
             {
@@ -177,6 +178,41 @@ namespace QuanLyThuVien.Views
             table.Columns.Add(new DataGridTextColumn { Header = "Năm", Binding = new System.Windows.Data.Binding("PublicationYear"), Width = 65 });
             table.Columns.Add(new DataGridTextColumn { Header = "Số cuốn", Binding = new System.Windows.Data.Binding("PhysicalCopies"), Width = 75 });
             _main.Children.Add(table);
+            var editorContainer = new StackPanel();
+            var detailButton = new Button
+            {
+                Content = "Xem chi tiết sách được chọn",
+                Height = 38,
+                Width = 240,
+                Margin = new Thickness(0, 10, 0, 8),
+                HorizontalAlignment = HorizontalAlignment.Left
+            };
+            _main.Children.Add(detailButton);
+            var detailText = new TextBlock
+            {
+                TextWrapping = TextWrapping.Wrap,
+                Foreground = Brush("#334155"),
+                Margin = new Thickness(0, 8, 0, 12)
+            };
+            _main.Children.Add(detailText);
+            _main.Children.Add(editorContainer);
+            detailButton.Click += async (s, e) =>
+            {
+                editorContainer.Children.Clear();
+                var selected = table.SelectedItem;
+                if (selected == null) { detailText.Text = "Chọn một đầu sách trong bảng trước."; return; }
+                var prop = selected.GetType().GetProperty("BookId");
+                if (prop == null) { detailText.Text = "Không đọc được ID sách."; return; }
+                var bookId = Convert.ToInt64(prop.GetValue(selected, null));
+                var data = await _detailClient.GetDetailsAsync(_token, bookId);
+                if (!string.IsNullOrEmpty(data.Error)) { detailText.Text = data.Error; return; }
+                detailText.Text = data.Title + "\nTác giả: " + data.Authors +
+                    "\nISBN: " + data.Isbn + " | NXB: " + data.Publisher +
+                    "\nBản sao: " + data.TotalCopies + " | Tình trạng active: " + data.ActiveCopies +
+                    "\nMô tả: " + data.Description;
+                if (_role == "Staff" || _role == "Admin")
+                    ShowCopyEditor(bookId, detailText, editorContainer);
+            };
             async System.Threading.Tasks.Task LoadAsync()
             {
                 find.IsEnabled = false;
@@ -195,6 +231,55 @@ namespace QuanLyThuVien.Views
                 if (e.Key == System.Windows.Input.Key.Enter) await LoadAsync();
             };
             await LoadAsync();
+        }
+
+        private void ShowCopyEditor(long bookId, TextBlock output, StackPanel container)
+        {
+            var row = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Margin = new Thickness(0, 12, 0, 12)
+            };
+            var code = new TextBox
+            {
+                Width = 170,
+                Height = 34,
+                Margin = new Thickness(0, 0, 8, 0),
+                ToolTip = "Mã cuốn duy nhất (VD: LIB-0001)"
+            };
+            var shelf = new TextBox
+            {
+                Width = 145,
+                Height = 34,
+                Margin = new Thickness(0, 0, 8, 0),
+                ToolTip = "Vị trí kệ sách"
+            };
+            var add = new Button { Content = "Thêm cuốn vật lý", Width = 145, Height = 34 };
+            row.Children.Add(code); row.Children.Add(shelf); row.Children.Add(add);
+            container.Children.Add(new TextBlock { Text = "Nhập mã cuốn và kệ (chỉ Staff/Admin):" });
+            container.Children.Add(row);
+            var copies = new DataGrid
+            {
+                AutoGenerateColumns = true,
+                IsReadOnly = true,
+                Height = 170,
+                CanUserAddRows = false
+            };
+            container.Children.Add(copies);
+            async System.Threading.Tasks.Task Refresh()
+            {
+                var list = await _detailClient.GetCopiesAsync(_token, bookId);
+                if (!string.IsNullOrEmpty(list.Error)) output.Text = list.Error;
+                else copies.ItemsSource = list.Copies;
+            }
+            add.Click += async (s, e) =>
+            {
+                add.IsEnabled = false;
+                output.Text = await _detailClient.AddCopyAsync(_token, bookId, code.Text.Trim(), shelf.Text.Trim());
+                await Refresh();
+                add.IsEnabled = true;
+            };
+            var ignored = Refresh();
         }
 
         private void ShowPending(string heading)
