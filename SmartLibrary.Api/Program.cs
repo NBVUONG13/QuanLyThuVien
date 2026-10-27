@@ -1,6 +1,11 @@
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Npgsql;
+using NpgsqlTypes;
+using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.RegularExpressions;
 using SmartLibrary.Api.Services;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -14,6 +19,8 @@ builder.Services.AddScoped<AuthService>();
 builder.Services.AddSingleton<RegistrationService>();
 // Phien tam luu tren server, chi dung de test localhost.
 builder.Services.AddSingleton<SessionService>();
+// Developer-only one-time codes for Reader profile changes; no new file or database table.
+builder.Services.AddSingleton<ReaderProfileEditOtpStore>();
 
 var app = builder.Build();
 
@@ -399,6 +406,8 @@ app.MapGet("/api/books", async (
 
 
 // Step 44: book detail is readable by logged-in roles. Copy changes require Staff/Admin.
+// STEP 51: Full book details for a centred WPF detail dialog. Counts are derived
+// from existing physical copies and active borrow details, not book metadata.
 app.MapGet("/api/books/{bookId:long}/details", async (
     long bookId, HttpRequest request, SessionService sessions,
     IConfiguration config, CancellationToken ct) =>
@@ -409,7 +418,9 @@ app.MapGet("/api/books/{bookId:long}/details", async (
     if (session.Role is not ("Reader" or "Staff" or "Admin")) return Results.StatusCode(403);
     try
     {
-        await using var db = new NpgsqlConnection(config.GetConnectionString("AivenPostgres"));
+        string cs = config.GetConnectionString("AivenPostgres")
+            ?? throw new InvalidOperationException("Database not configured.");
+        await using var db = new NpgsqlConnection(cs);
         await db.OpenAsync(ct);
         const string sql = @"
             SELECT b.book_id, b.title, COALESCE(b.isbn,''),
@@ -418,35 +429,73 @@ app.MapGet("/api/books/{bookId:long}/details", async (
                    COALESCE((SELECT string_agg(a.name, ', ' ORDER BY a.name)
                      FROM public.book_authors ba JOIN public.authors a ON ba.author_id=a.author_id
                      WHERE ba.book_id=b.book_id),''),
+                   COALESCE((SELECT string_agg(c.name, ', ' ORDER BY c.name)
+                     FROM public.book_categories bc JOIN public.categories c ON bc.category_id=c.category_id
+                     WHERE bc.book_id=b.book_id),''),
                    (SELECT COUNT(*) FROM public.book_copies c WHERE c.book_id=b.book_id),
-                   (SELECT COUNT(*) FROM public.book_copies c WHERE c.book_id=b.book_id
-                    AND c.condition_status='active')
+                   (SELECT COUNT(*) FROM public.book_copies c
+                     WHERE c.book_id=b.book_id AND c.condition_status='active'),
+                   (SELECT COUNT(*) FROM public.book_copies c
+                     WHERE c.book_id=b.book_id AND c.condition_status='active'
+                       AND NOT EXISTS (
+                         SELECT 1 FROM public.borrow_details bd
+                         WHERE bd.book_copy_id=c.copy_id AND bd.closed_at IS NULL)),
+                   (SELECT COUNT(*) FROM public.book_copies c
+                     WHERE c.book_id=b.book_id AND EXISTS (
+                         SELECT 1 FROM public.borrow_details bd
+                         WHERE bd.book_copy_id=c.copy_id AND bd.closed_at IS NULL)),
+                   COALESCE(b.cover_object_key,'')
             FROM public.books b
             LEFT JOIN public.publishers p ON p.publisher_id=b.publisher_id
             WHERE b.book_id=@id AND b.is_visible=TRUE;";
         await using var cmd = new NpgsqlCommand(sql, db);
         cmd.Parameters.AddWithValue("id", bookId);
-        await using var r = await cmd.ExecuteReaderAsync(ct);
-        if (!await r.ReadAsync(ct)) return Results.NotFound();
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        if (!await reader.ReadAsync(ct)) return Results.NotFound();
         return Results.Ok(new
         {
-            bookId = r.GetInt64(0),
-            title = r.GetString(1),
-            isbn = r.GetString(2),
-            description = r.GetString(3),
-            publisher = r.GetString(4),
-            publicationYear = r.GetInt32(5),
-            authors = r.GetString(6),
-            totalCopies = r.GetInt64(7),
-            activeCopies = r.GetInt64(8)
+            bookId = reader.GetInt64(0),
+            title = reader.GetString(1),
+            isbn = reader.GetString(2),
+            description = reader.GetString(3),
+            publisher = reader.GetString(4),
+            publicationYear = reader.GetInt32(5),
+            authors = reader.GetString(6),
+            categories = reader.GetString(7),
+            totalCopies = reader.GetInt64(8),
+            activeCopies = reader.GetInt64(9),
+            availableCopies = reader.GetInt64(10),
+            onLoanCopies = reader.GetInt64(11),
+            coverUrl = BuildPublicCoverUrl(reader.GetString(12), config)
         });
     }
-    catch (Exception e)
+    catch (OperationCanceledException) when (ct.IsCancellationRequested)
     {
-        app.Logger.LogError("Book detail failed: {Type}", e.GetType().Name);
-        return Results.Json(new { message = "Khong the tai chi tiet sach." }, statusCode: 503);
+        return Results.StatusCode(StatusCodes.Status499ClientClosedRequest);
+    }
+    catch (Exception error)
+    {
+        app.Logger.LogError("Book details failed: {Type}", error.GetType().Name);
+        return Results.Json(new { message = "Khong tai duoc chi tiet sach." }, statusCode: 503);
     }
 });
+
+// Only expose cover images if there is an explicitly configured public HTTPS CDN.
+// cover_object_key is a storage key, NEVER a URL or a database secret.
+static string? BuildPublicCoverUrl(string key, IConfiguration config)
+{
+    string? baseUrl = config["BookCovers:PublicBaseUrl"]?.Trim();
+    if (string.IsNullOrWhiteSpace(baseUrl) || string.IsNullOrWhiteSpace(key)) return null;
+    if (!Uri.TryCreate(baseUrl, UriKind.Absolute, out var origin) || origin.Scheme != Uri.UriSchemeHttps)
+        return null;
+    if (key.StartsWith('/') || key.Contains('\\') || key.Contains('?') || key.Contains('#'))
+        return null;
+    string[] segments = key.Split('/');
+    if (segments.Any(part => part.Length == 0 || part == "." || part == ".." || part.Contains(':')))
+        return null;
+    string path = string.Join("/", segments.Select(Uri.EscapeDataString));
+    return baseUrl.TrimEnd('/') + "/" + path;
+}
 
 app.MapGet("/api/books/{bookId:long}/copies", async (
     long bookId, HttpRequest request, SessionService sessions,
@@ -717,6 +766,260 @@ app.MapPost("/api/admin/staff", async (NewStaffRequest body, HttpRequest request
     }
 });
 
+
+// STEP 52 — Reader profiles. No new database table or migration.
+// A Reader sees only their OWN record; Staff/Admin can search limited basic details.
+app.MapGet("/api/readers/me", async (HttpRequest request, SessionService sessions,
+    IConfiguration configuration, CancellationToken cancellationToken) =>
+{
+    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    var actor = sessions.Validate(ReadBearerToken(request));
+    if (actor is null) return Results.Unauthorized();
+    if (actor.Role != "Reader") return Results.StatusCode(StatusCodes.Status403Forbidden);
+    try
+    {
+        string connectionString = configuration.GetConnectionString("AivenPostgres")
+            ?? throw new InvalidOperationException("PostgreSQL connection string is missing.");
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(cancellationToken);
+        const string sql = @"
+            SELECT u.user_id, u.username, rp.reader_code, rp.full_name,
+                   COALESCE(rp.phone_e164,''), (rp.phone_verified_at IS NOT NULL),
+                   t.tier_name, t.max_active_copies, t.max_loan_days, u.account_status
+            FROM public.reader_profiles rp
+            JOIN public.users u ON u.user_id = rp.user_id
+            JOIN public.reader_tiers t ON t.tier_id = rp.tier_id
+            WHERE u.user_id = @user_id";
+        await using var cmd = new NpgsqlCommand(sql, connection);
+        cmd.Parameters.AddWithValue("user_id", actor.UserId); // Server session, never client input.
+        await using var rd = await cmd.ExecuteReaderAsync(cancellationToken);
+        if (!await rd.ReadAsync(cancellationToken)) return Results.NotFound();
+        return Results.Ok(new
+        {
+            reader = new
+            {
+                userId = rd.GetInt64(0),
+                username = rd.GetString(1),
+                readerCode = rd.GetString(2),
+                fullName = rd.GetString(3),
+                phone = rd.GetString(4),
+                phoneVerified = rd.GetBoolean(5),
+                tierName = rd.GetString(6),
+                maxActiveCopies = rd.GetInt32(7),
+                maxLoanDays = rd.GetInt32(8),
+                status = rd.GetString(9)
+            }
+        });
+    }
+    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+    {
+        return Results.StatusCode(StatusCodes.Status499ClientClosedRequest);
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogError("Reader self profile failed: {Type}", ex.GetType().Name);
+        return Results.Json(new { message = "Khong the tai ho so doc gia." }, statusCode: 503);
+    }
+});
+
+app.MapGet("/api/readers", async (string? query, HttpRequest request, SessionService sessions,
+    IConfiguration configuration, CancellationToken cancellationToken) =>
+{
+    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    var actor = sessions.Validate(ReadBearerToken(request));
+    if (actor is null) return Results.Unauthorized();
+    if (actor.Role is not ("Staff" or "Admin"))
+        return Results.StatusCode(StatusCodes.Status403Forbidden);
+    string keyword = (query ?? "").Trim();
+    if (keyword.Length > 100)
+        return Results.BadRequest(new { message = "Tu khoa khong duoc vuot qua 100 ky tu." });
+    try
+    {
+        string connectionString = configuration.GetConnectionString("AivenPostgres")
+            ?? throw new InvalidOperationException("PostgreSQL connection string is missing.");
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(cancellationToken);
+        const string sql = @"
+            SELECT u.user_id, u.username, rp.reader_code, rp.full_name,
+                   t.tier_name, u.account_status
+            FROM public.reader_profiles rp
+            JOIN public.users u ON u.user_id = rp.user_id
+            JOIN public.reader_tiers t ON t.tier_id = rp.tier_id
+            WHERE @keyword = ''
+               OR u.username ILIKE @pattern
+               OR rp.full_name ILIKE @pattern
+               OR rp.reader_code ILIKE @pattern
+            ORDER BY rp.user_id DESC
+            LIMIT 100";
+        await using var cmd = new NpgsqlCommand(sql, connection);
+        cmd.Parameters.AddWithValue("keyword", keyword);
+        cmd.Parameters.AddWithValue("pattern", "%" + keyword + "%");
+        await using var rd = await cmd.ExecuteReaderAsync(cancellationToken);
+        var rows = new List<object>();
+        while (await rd.ReadAsync(cancellationToken))
+            rows.Add(new
+            {
+                userId = rd.GetInt64(0),
+                username = rd.GetString(1),
+                readerCode = rd.GetString(2),
+                fullName = rd.GetString(3),
+                tierName = rd.GetString(4),
+                status = rd.GetString(5)
+                // Do NOT expose Reader phone or citizen information to the list.
+            });
+        return Results.Ok(new { readers = rows });
+    }
+    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+    {
+        return Results.StatusCode(StatusCodes.Status499ClientClosedRequest);
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogError("Reader list failed: {Type}", ex.GetType().Name);
+        return Results.Json(new { message = "Khong the tai danh sach doc gia." }, statusCode: 503);
+    }
+});
+
+
+// STEP 53 — Reader self-service edits. OTP only printed in API terminal in Development.
+// Never accept a target userId or permission role from the WPF client.
+app.MapPost("/api/readers/me/edit/start", async (
+    ReaderProfileEditStartRequest body, HttpRequest request, SessionService sessions,
+    ReaderProfileEditOtpStore otpStore, IConfiguration config, CancellationToken ct) =>
+{
+    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    var actor = sessions.Validate(ReadBearerToken(request));
+    if (actor is null) return Results.Unauthorized();
+    if (actor.Role != "Reader") return Results.StatusCode(StatusCodes.Status403Forbidden);
+
+    string newName = (body.FullName ?? "").Trim();
+    if (newName.Length is < 2 or > 200 || newName.Any(char.IsControl))
+        return Results.BadRequest(new { message = "Ho ten phai dai 2-200 ky tu hop le." });
+    string? phone = body.Phone?.Trim();
+    if (!string.IsNullOrEmpty(phone))
+    {
+        phone = Regex.Replace(phone, @"[\s().-]", "");
+        if (Regex.IsMatch(phone, @"\A0[35789]\d{8}\z")) phone = "+84" + phone[1..];
+        if (!Regex.IsMatch(phone, @"\A\+84[35789]\d{8}\z"))
+            return Results.BadRequest(new { message = "SDT Viet Nam khong hop le. VD: 0912345678." });
+    }
+    else phone = null;
+
+    try
+    {
+        await using var db = new NpgsqlConnection(config.GetConnectionString("AivenPostgres"));
+        await db.OpenAsync(ct);
+        const string sql = @"
+            SELECT rp.full_name, rp.phone_e164
+            FROM public.reader_profiles rp JOIN public.users u ON u.user_id=rp.user_id
+            WHERE rp.user_id=@user_id AND u.account_status='active';";
+        string oldName;
+        string? oldPhone;
+        await using (var cmd = new NpgsqlCommand(sql, db))
+        {
+            cmd.Parameters.AddWithValue("user_id", actor.UserId);
+            await using var rd = await cmd.ExecuteReaderAsync(ct);
+            if (!await rd.ReadAsync(ct)) return Results.NotFound();
+            oldName = rd.GetString(0);
+            oldPhone = rd.IsDBNull(1) ? null : rd.GetString(1);
+        }
+        if (oldPhone is not null && phone is null)
+            return Results.BadRequest(new { message = "Khong the xoa so dien thoai da dang ky trong man hinh nay." });
+        if (string.Equals(newName, oldName, StringComparison.Ordinal) &&
+            string.Equals(phone, oldPhone, StringComparison.Ordinal))
+            return Results.BadRequest(new { message = "Thong tin chua thay doi." });
+
+        if (!otpStore.TryCreate(actor.UserId, oldName, oldPhone, newName, phone,
+            out Guid requestId, out string otp, out DateTimeOffset expiresAt, out int retrySeconds))
+            return Results.Json(new { message = $"Vui long thu lai sau {retrySeconds} giay." },
+                statusCode: StatusCodes.Status429TooManyRequests);
+
+        // THIS IS NOT REAL SMS DELIVERY AND DOES NOT PROVE PHONE OWNERSHIP.
+        app.Logger.LogWarning("DEV ONLY — Reader {UserId} profile edit OTP: {Otp} (request {RequestId}). NOT SMS.",
+            actor.UserId, otp, requestId);
+        return Results.Ok(new
+        {
+            requestId,
+            expiresAt,
+            message = "Da tao OTP. Chi test: xem ma trong terminal SmartLibrary.Api, KHONG gui SMS."
+        });
+    }
+    catch (OperationCanceledException) when (ct.IsCancellationRequested)
+    {
+        return Results.StatusCode(StatusCodes.Status499ClientClosedRequest);
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogError("Reader edit start failed: {Type}", ex.GetType().Name);
+        return Results.Json(new { message = "Khong tao duoc yeu cau doi ho so." }, statusCode: 503);
+    }
+});
+
+app.MapPost("/api/readers/me/edit/confirm", async (
+    ReaderProfileEditConfirmRequest body, HttpRequest request, SessionService sessions,
+    ReaderProfileEditOtpStore otpStore, IConfiguration config, CancellationToken ct) =>
+{
+    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    var actor = sessions.Validate(ReadBearerToken(request));
+    if (actor is null) return Results.Unauthorized();
+    if (actor.Role != "Reader") return Results.StatusCode(StatusCodes.Status403Forbidden);
+    string code = body.Otp?.Trim() ?? "";
+    if (!Regex.IsMatch(code, @"\A\d{6}\z") || body.RequestId == Guid.Empty)
+        return Results.BadRequest(new { message = "Ma OTP gom dung 6 chu so." });
+    var state = otpStore.Consume(actor.UserId, body.RequestId, code, out ReaderProfileEditChallenge? change);
+    if (state != "ok" || change is null)
+        return Results.BadRequest(new
+        {
+            message = state switch
+            {
+                "expired" => "Ma OTP het han. Vui long gui ma moi.",
+                "wrong" => "Ma OTP khong dung. Toi da 5 lan thu.",
+                "locked" => "Qua so lan nhap sai. Vui long yeu cau ma moi.",
+                _ => "Khong co yeu cau OTP hop le cho phien nay."
+            }
+        });
+    try
+    {
+        await using var db = new NpgsqlConnection(config.GetConnectionString("AivenPostgres"));
+        await db.OpenAsync(ct);
+        // Optimistic precondition: a second session cannot silently overwrite changed data.
+        const string sql = @"
+            UPDATE public.reader_profiles rp
+            SET full_name=@new_name, phone_e164=@new_phone,
+                phone_verified_at = CASE WHEN rp.phone_e164 IS DISTINCT FROM @new_phone
+                    THEN CURRENT_TIMESTAMP ELSE rp.phone_verified_at END
+            WHERE rp.user_id=@user_id
+              AND rp.full_name=@old_name
+              AND rp.phone_e164 IS NOT DISTINCT FROM @old_phone
+              AND EXISTS (SELECT 1 FROM public.users u
+                          WHERE u.user_id=rp.user_id AND u.account_status='active')
+            RETURNING rp.user_id;";
+        await using var cmd = new NpgsqlCommand(sql, db);
+        cmd.Parameters.AddWithValue("user_id", actor.UserId);
+        cmd.Parameters.Add("new_name", NpgsqlDbType.Varchar).Value = change.NewName;
+        cmd.Parameters.Add("new_phone", NpgsqlDbType.Varchar).Value = (object?)change.NewPhone ?? DBNull.Value;
+        cmd.Parameters.Add("old_name", NpgsqlDbType.Varchar).Value = change.OldName;
+        cmd.Parameters.Add("old_phone", NpgsqlDbType.Varchar).Value = (object?)change.OldPhone ?? DBNull.Value;
+        var updatedId = await cmd.ExecuteScalarAsync(ct);
+        if (updatedId is null)
+            return Results.Conflict(new { message = "Ho so da thay doi o phien khac. Hay tai lai va thuc hien lai." });
+        return Results.Ok(new { message = "profile_updated" });
+    }
+    catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UniqueViolation)
+    {
+        return Results.Conflict(new { message = "So dien thoai da duoc tai khoan khac su dung." });
+    }
+    catch (OperationCanceledException) when (ct.IsCancellationRequested)
+    {
+        return Results.StatusCode(StatusCodes.Status499ClientClosedRequest);
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogError("Reader edit confirm failed: {Type}", ex.GetType().Name);
+        return Results.Json(new { message = "Khong cap nhat duoc ho so. Vui long tao lai OTP." }, statusCode: 503);
+    }
+});
+
 app.Run();
 
 // Du lieu JSON nhan tu WPF hoac Postman/PowerShell.
@@ -733,3 +1036,71 @@ public sealed record AddCopyRequest(string? CopyCode, string? ShelfLocation);
 public sealed record ReferenceCreateRequest(string? Name, string? Detail);
 
 public sealed record NewStaffRequest(string? Username, string? FullName, string? StaffCode, string? Password);
+
+public sealed record ReaderProfileEditStartRequest(string? FullName, string? Phone);
+public sealed record ReaderProfileEditConfirmRequest(Guid RequestId, string? Otp);
+
+// In-memory DEV-only challenge, one pending change per account; no plaintext OTP stored.
+// This is a simulator. Never replace real phone verification with console OTP in production.
+public sealed record ReaderProfileEditChallenge(
+    Guid Id, string OldName, string? OldPhone, string NewName, string? NewPhone,
+    byte[] OtpHash, DateTimeOffset ExpiresAt, int RemainingAttempts);
+
+public sealed class ReaderProfileEditOtpStore
+{
+    private readonly object _gate = new();
+    private readonly Dictionary<long, ReaderProfileEditChallenge> _pending = new();
+    private readonly Dictionary<long, DateTimeOffset> _lastIssued = new();
+    private readonly byte[] _secret = RandomNumberGenerator.GetBytes(32);
+
+    private byte[] Hash(Guid id, string code) => HMACSHA256.HashData(
+        _secret, Encoding.UTF8.GetBytes(id.ToString("N") + ":" + code));
+
+    public bool TryCreate(long userId, string oldName, string? oldPhone, string newName,
+        string? newPhone, out Guid requestId, out string otp,
+        out DateTimeOffset expiresAt, out int retrySeconds)
+    {
+        lock (_gate)
+        {
+            var now = DateTimeOffset.UtcNow;
+            requestId = Guid.Empty; otp = ""; expiresAt = now; retrySeconds = 0;
+            if (_lastIssued.TryGetValue(userId, out var last) && now < last.AddSeconds(60))
+            {
+                retrySeconds = (int)Math.Ceiling((last.AddSeconds(60) - now).TotalSeconds);
+                return false;
+            }
+            requestId = Guid.NewGuid();
+            otp = RandomNumberGenerator.GetInt32(0, 1_000_000).ToString("D6", CultureInfo.InvariantCulture);
+            expiresAt = now.AddMinutes(5);
+            _pending[userId] = new ReaderProfileEditChallenge(
+                requestId, oldName, oldPhone, newName, newPhone, Hash(requestId, otp), expiresAt, 5);
+            _lastIssued[userId] = now;
+            return true;
+        }
+    }
+
+    public string Consume(long userId, Guid requestId, string otp, out ReaderProfileEditChallenge? change)
+    {
+        lock (_gate)
+        {
+            change = null;
+            if (!_pending.TryGetValue(userId, out var pending) || pending.Id != requestId)
+                return "missing";
+            if (pending.ExpiresAt <= DateTimeOffset.UtcNow)
+            {
+                _pending.Remove(userId);
+                return "expired";
+            }
+            if (!CryptographicOperations.FixedTimeEquals(Hash(requestId, otp), pending.OtpHash))
+            {
+                int remaining = pending.RemainingAttempts - 1;
+                if (remaining <= 0) { _pending.Remove(userId); return "locked"; }
+                _pending[userId] = pending with { RemainingAttempts = remaining };
+                return "wrong";
+            }
+            _pending.Remove(userId); // single-use; no replay even if DB update fails.
+            change = pending;
+            return "ok";
+        }
+    }
+}

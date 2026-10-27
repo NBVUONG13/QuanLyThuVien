@@ -103,9 +103,13 @@ namespace QuanLyThuVien.Services
         [DataMember(Name = "description")] public string Description { get; set; }
         [DataMember(Name = "publisher")] public string Publisher { get; set; }
         [DataMember(Name = "authors")] public string Authors { get; set; }
+        [DataMember(Name = "categories")] public string Categories { get; set; }
         [DataMember(Name = "publicationYear")] public int PublicationYear { get; set; }
         [DataMember(Name = "totalCopies")] public long TotalCopies { get; set; }
         [DataMember(Name = "activeCopies")] public long ActiveCopies { get; set; }
+        [DataMember(Name = "availableCopies")] public long AvailableCopies { get; set; }
+        [DataMember(Name = "onLoanCopies")] public long OnLoanCopies { get; set; }
+        [DataMember(Name = "coverUrl")] public string CoverUrl { get; set; }
         public string Error { get; set; }
         public static BookDetailResult Fail(string error) { return new BookDetailResult { Error = error }; }
     }

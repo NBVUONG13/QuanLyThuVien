@@ -128,6 +128,150 @@ namespace QuanLyThuVien.Services
             catch (TaskCanceledException) { return false; }
         }
 
+
+        // STEP 52: Reader self profile and authorized reader listing.
+        public async Task<ReaderProfileResponse> GetMyReaderProfileAsync(string token)
+        {
+            return await GetReaderDataAsync("http://127.0.0.1:5082/api/readers/me", token);
+        }
+
+        public async Task<ReaderProfileResponse> FindReadersAsync(string token, string query)
+        {
+            string url = "http://127.0.0.1:5082/api/readers?query=" +
+                         Uri.EscapeDataString((query ?? "").Trim());
+            return await GetReaderDataAsync(url, token);
+        }
+
+        private static async Task<ReaderProfileResponse> GetReaderDataAsync(string url, string token)
+        {
+            if (string.IsNullOrWhiteSpace(token))
+                return new ReaderProfileResponse { Message = "Bạn chưa đăng nhập." };
+            try
+            {
+                using (var request = new HttpRequestMessage(HttpMethod.Get, url))
+                {
+                    request.Headers.Authorization =
+                        new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+                    using (var response = await Http.SendAsync(request).ConfigureAwait(false))
+                    {
+                        if (response.StatusCode == HttpStatusCode.Unauthorized)
+                            return new ReaderProfileResponse { Message = "Phiên đăng nhập đã hết hạn." };
+                        if (response.StatusCode == HttpStatusCode.Forbidden)
+                            return new ReaderProfileResponse { Message = "Không có quyền truy cập." };
+                        if (!response.IsSuccessStatusCode)
+                            return new ReaderProfileResponse { Message = "Không tải được độc giả. HTTP " + (int)response.StatusCode };
+                        var json = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+                        var data = DeserializeJson<ReaderProfileResponse>(json);
+                        if (data == null)
+                            return new ReaderProfileResponse { Message = "Dữ liệu phản hồi không hợp lệ." };
+                        data.IsSuccess = true;
+                        return data;
+                    }
+                }
+            }
+            catch (Exception ex) when (ex is HttpRequestException || ex is TaskCanceledException ||
+                                       ex is SerializationException || ex is ArgumentException)
+            {
+                return new ReaderProfileResponse { Message = "Không kết nối hoặc đọc được API độc giả." };
+            }
+        }
+
+
+
+        // STEP 53. Profile changes MUST use server OTP flow; no direct profile PUT/PATCH.
+        public async Task<ProfileEditStartResult> StartProfileEditAsync(string token, string fullName, string phone)
+        {
+            if (string.IsNullOrWhiteSpace(token))
+                return new ProfileEditStartResult { Message = "Phiên đăng nhập không hợp lệ." };
+            try
+            {
+                using (var request = new HttpRequestMessage(HttpMethod.Post,
+                    "http://127.0.0.1:5082/api/readers/me/edit/start"))
+                {
+                    request.Headers.Authorization =
+                        new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+                    request.Content = new StringContent(SerializeJson(new ProfileEditStartDto
+                    { FullName = fullName, Phone = phone }), Encoding.UTF8, "application/json");
+                    using (var response = await Http.SendAsync(request).ConfigureAwait(false))
+                    {
+                        string json = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+                        if (!response.IsSuccessStatusCode)
+                            return new ProfileEditStartResult
+                            {
+                                Message = ReadApiError(json,
+                                "Không gửi được yêu cầu OTP (HTTP " + (int)response.StatusCode + ").")
+                            };
+                        var data = DeserializeJson<ProfileEditStartResult>(json);
+                        if (data == null || data.RequestId == Guid.Empty)
+                            return new ProfileEditStartResult { Message = "API trả về yêu cầu OTP không hợp lệ." };
+                        data.IsSuccess = true;
+                        return data;
+                    }
+                }
+            }
+            catch (Exception ex) when (ex is HttpRequestException || ex is TaskCanceledException ||
+                                       ex is SerializationException || ex is ArgumentException)
+            { return new ProfileEditStartResult { Message = "Không kết nối được API xác nhận OTP." }; }
+        }
+
+        public async Task<ProfileEditConfirmResult> ConfirmProfileEditAsync(string token, Guid requestId, string otp)
+        {
+            if (string.IsNullOrWhiteSpace(token))
+                return new ProfileEditConfirmResult { Message = "Phiên đăng nhập không hợp lệ." };
+            try
+            {
+                using (var request = new HttpRequestMessage(HttpMethod.Post,
+                    "http://127.0.0.1:5082/api/readers/me/edit/confirm"))
+                {
+                    request.Headers.Authorization =
+                        new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+                    request.Content = new StringContent(SerializeJson(new ProfileEditConfirmDto
+                    { RequestId = requestId, Otp = otp }), Encoding.UTF8, "application/json");
+                    using (var response = await Http.SendAsync(request).ConfigureAwait(false))
+                    {
+                        string json = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+                        if (!response.IsSuccessStatusCode)
+                            return new ProfileEditConfirmResult
+                            {
+                                Message = ReadApiError(json,
+                                "Không thể xác nhận OTP (HTTP " + (int)response.StatusCode + ").")
+                            };
+                        var data = DeserializeJson<ProfileEditConfirmResult>(json);
+                        if (data == null || data.Message != "profile_updated")
+                            return new ProfileEditConfirmResult { Message = "API không xác nhận cập nhật hồ sơ." };
+                        return new ProfileEditConfirmResult { IsSuccess = true, Message = "Cập nhật hồ sơ thành công." };
+                    }
+                }
+            }
+            catch (Exception ex) when (ex is HttpRequestException || ex is TaskCanceledException ||
+                                       ex is SerializationException || ex is ArgumentException)
+            { return new ProfileEditConfirmResult { Message = "Không kết nối được API xác nhận OTP." }; }
+        }
+
+        private static string ReadApiError(string json, string fallback)
+        {
+            try
+            {
+                var error = DeserializeJson<ProfileEditConfirmResult>(json);
+                if (!string.IsNullOrWhiteSpace(error?.Message)) return error.Message;
+            }
+            catch (Exception) { }
+            return fallback;
+        }
+
+        [DataContract]
+        private sealed class ProfileEditStartDto
+        {
+            [DataMember(Name = "fullName")] public string FullName { get; set; }
+            [DataMember(Name = "phone")] public string Phone { get; set; }
+        }
+        [DataContract]
+        private sealed class ProfileEditConfirmDto
+        {
+            [DataMember(Name = "requestId")] public Guid RequestId { get; set; }
+            [DataMember(Name = "otp")] public string Otp { get; set; }
+        }
+
         private static string SerializeJson<T>(T value)
         {
             var serializer = new DataContractJsonSerializer(typeof(T));
@@ -190,6 +334,48 @@ namespace QuanLyThuVien.Services
             [DataMember(Name = "role")]
             public string Role { get; set; }
         }
+    }
+
+
+    [DataContract]
+    public sealed class ReaderProfileResponse
+    {
+        [IgnoreDataMember] public bool IsSuccess { get; set; }
+        [DataMember(Name = "message")] public string Message { get; set; }
+        [DataMember(Name = "reader")] public ReaderProfileItem Reader { get; set; }
+        [DataMember(Name = "readers")] public System.Collections.Generic.List<ReaderProfileItem> Readers { get; set; }
+    }
+
+    [DataContract]
+    public sealed class ReaderProfileItem
+    {
+        [DataMember(Name = "userId")] public long UserId { get; set; }
+        [DataMember(Name = "username")] public string Username { get; set; }
+        [DataMember(Name = "readerCode")] public string ReaderCode { get; set; }
+        [DataMember(Name = "fullName")] public string FullName { get; set; }
+        [DataMember(Name = "tierName")] public string TierName { get; set; }
+        [DataMember(Name = "status")] public string Status { get; set; }
+        // Only returned by GET /api/readers/me; NEVER included in admin/staff list.
+        [DataMember(Name = "phone")] public string Phone { get; set; }
+        [DataMember(Name = "phoneVerified")] public bool PhoneVerified { get; set; }
+        [DataMember(Name = "maxActiveCopies")] public int MaxActiveCopies { get; set; }
+        [DataMember(Name = "maxLoanDays")] public int MaxLoanDays { get; set; }
+    }
+
+
+    [DataContract]
+    public sealed class ProfileEditStartResult
+    {
+        [IgnoreDataMember] public bool IsSuccess { get; set; }
+        [DataMember(Name = "message")] public string Message { get; set; }
+        [DataMember(Name = "requestId")] public Guid RequestId { get; set; }
+    }
+
+    [DataContract]
+    public sealed class ProfileEditConfirmResult
+    {
+        [IgnoreDataMember] public bool IsSuccess { get; set; }
+        [DataMember(Name = "message")] public string Message { get; set; }
     }
 
     public sealed class AuthLoginResult
