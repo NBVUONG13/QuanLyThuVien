@@ -1,5 +1,6 @@
 using System;
 using System.Collections.ObjectModel;
+using System.Linq;
 using System.Threading.Tasks;
 using System.Windows.Input;
 using QuanLyThuVien.Services;
@@ -97,6 +98,7 @@ namespace QuanLyThuVien.ViewModels
                 CurrentPage = new ReaderDetailPage(ReaderPanel, BackFromReaderDetailsCommand);
             };
             Loans = new BorrowReturnViewModel(_token, Role);
+            Loans.IdentityDetailRequested += username => { _ = OpenRequestReaderAsync(username); };
             Requests = new BorrowRequestViewModel(_token, Role);
             Requests.ReaderDetailRequested += username => { _ = OpenRequestReaderAsync(username); };
             Status = "Đã xác thực phiên: " + Username + " (" + Role + ")";
@@ -507,7 +509,7 @@ namespace QuanLyThuVien.ViewModels
 
 
     // Step54: lending domain lives in a dedicated VM TYPE, in the existing MainViewModel.cs
-    // so the user does not need to add an otherwise empty/duplicate screen or update csproj.
+    // so the user does not need to add an otherwise empty/duplicate screen
     public sealed class BorrowReturnViewModel : MvvmBase
     {
         private readonly string _token;
@@ -525,17 +527,78 @@ namespace QuanLyThuVien.ViewModels
         private LoanReaderSuggestion _selectedReader;
         private LoanItem _selectedLoan;
         private AvailableLoanCopy _selectedCopy;
+        private int _identityVersion;
+        private string _identityPhone = "", _identityCitizen = "", _identityMessage =
+            "Nhập đủ SĐT hoặc 12 số CCCD để kiểm tra hồ sơ cũ.";
+        private bool _identityBusy, _identityConflict;
+        private ReaderIdentityMatch _selectedIdentityMatch;
+
 
         public BorrowReturnViewModel(string token, string role)
         {
             _token = token;
             CanManage = role == "Staff" || role == "Admin";
             IsReader = role == "Reader";
+            CheckIdentityCommand = new AsyncCommand(_ => CheckIdentityAsync(++_identityVersion), _ => CanManage && !_identityBusy);
+            OpenIdentityDetailCommand = new ActionCommand(_ =>
+            {
+                if (CanManage && SelectedIdentityMatch != null)
+                    IdentityDetailRequested?.Invoke(SelectedIdentityMatch.Username);
+            }, _ => CanManage && SelectedIdentityMatch != null);
+            UseMatchedReaderCommand = new ActionCommand(_ =>
+            {
+                var match = SelectedIdentityMatch;
+                if (!CanManage || match == null || IdentityConflict || match.AccountStatus != "active" ||
+                    match.BorrowBlocked || match.OverdueCopies > 0) return;
+                ReaderUsername = match.Username;
+                IdentityMessage = "Đã chọn hồ sơ cũ: " + match.FullName +
+                    ". Staff cần xác minh danh tính trực tiếp trước khi tiếp nhận.";
+            }, _ => CanManage && SelectedIdentityMatch != null && !IdentityConflict &&
+                  SelectedIdentityMatch.AccountStatus == "active" &&
+                  !SelectedIdentityMatch.BorrowBlocked && SelectedIdentityMatch.OverdueCopies == 0);
+
             RefreshCommand = new AsyncCommand(_ => LoadAsync(), _ => !Busy);
             SearchAvailableCommand = new AsyncCommand(_ => SearchCopiesAsync(), _ => CanManage && !Busy);
             CheckoutCommand = new AsyncCommand(_ => CheckoutAsync(), _ => CanManage && !Busy);
             ReturnCommand = new AsyncCommand(_ => ReturnAsync(),
                 _ => CanManage && !Busy && SelectedLoan != null && SelectedLoan.IsOpen);
+        }
+        public event Action<string> IdentityDetailRequested;
+        public ObservableCollection<ReaderIdentityMatch> IdentityMatches { get; } =
+            new ObservableCollection<ReaderIdentityMatch>();
+        public ICommand CheckIdentityCommand { get; }
+        public ICommand OpenIdentityDetailCommand { get; }
+        public ICommand UseMatchedReaderCommand { get; }
+        public bool IdentityBusy
+        {
+            get => _identityBusy;
+            private set
+            {
+                if (!Set(ref _identityBusy, value)) return;
+                (CheckIdentityCommand as AsyncCommand)?.Refresh();
+            }
+        }
+        public bool IdentityConflict { get => _identityConflict; private set => Set(ref _identityConflict, value); }
+        public ReaderIdentityMatch SelectedIdentityMatch
+        {
+            get => _selectedIdentityMatch;
+            set
+            {
+                if (!Set(ref _selectedIdentityMatch, value)) return;
+                (OpenIdentityDetailCommand as ActionCommand)?.Refresh();
+                (UseMatchedReaderCommand as ActionCommand)?.Refresh();
+            }
+        }
+        public string IdentityMessage { get => _identityMessage; private set => Set(ref _identityMessage, value); }
+        public string IdentityPhone
+        {
+            get => _identityPhone;
+            set { if (Set(ref _identityPhone, value)) ScheduleIdentityLookup(); }
+        }
+        public string IdentityCitizen
+        {
+            get => _identityCitizen;
+            set { if (Set(ref _identityCitizen, value)) ScheduleIdentityLookup(); }
         }
         public bool CanManage { get; }
         public bool IsReader { get; }
@@ -659,6 +722,76 @@ namespace QuanLyThuVien.ViewModels
         public ICommand SearchAvailableCommand { get; }
         public ICommand CheckoutCommand { get; }
         public ICommand ReturnCommand { get; }
+
+        private void ScheduleIdentityLookup()
+        {
+            int version = ++_identityVersion;
+            IdentityMatches.Clear();
+            SelectedIdentityMatch = null;
+            IdentityConflict = false;
+            IdentityMessage = "Nhập đủ SĐT hoặc CCCD để tra cứu tự động.";
+            if (CanManage) _ = IdentityLookupDebouncedAsync(version);
+        }
+        private async Task IdentityLookupDebouncedAsync(int version)
+        {
+            try
+            {
+                await Task.Delay(500);
+                if (version != _identityVersion) return;
+                await CheckIdentityAsync(version);
+            }
+            catch (Exception)
+            { if (version == _identityVersion) IdentityMessage = "Không tra cứu được hồ sơ."; }
+        }
+        private async Task CheckIdentityAsync(int version)
+        {
+            if (!CanManage) return;
+            string phone = (IdentityPhone ?? "").Trim();
+            string id = (IdentityCitizen ?? "").Trim();
+            string digits = new string(phone.Where(char.IsDigit).ToArray());
+            bool phonePresent = phone.Length > 0, idPresent = id.Length > 0;
+            if ((!phonePresent && !idPresent) ||
+                (phonePresent && !(digits.Length == 10 ||
+                    (digits.Length == 11 && digits.StartsWith("84", StringComparison.Ordinal)))) ||
+                (idPresent && (id.Length != 12 || id.Any(c => c < '0' || c > '9'))))
+            {
+                if (version == _identityVersion)
+                    IdentityMessage = "Nhập đúng 10 số SĐT (hoặc +84) và/hoặc 12 số CCCD. Chưa gửi tra cứu khi đang nhập dở.";
+                return;
+            }
+            IdentityBusy = true;
+            if (version == _identityVersion) IdentityMessage = "Đang kiểm tra hồ sơ cũ...";
+            try
+            {
+                var result = await _api.CheckReaderIdentityAsync(_token, phone, id);
+                if (version != _identityVersion) return;
+                IdentityMatches.Clear();
+                IdentityConflict = false;
+                if (result == null || !result.IsSuccess)
+                { IdentityMessage = result?.Message ?? "Lỗi tra cứu."; return; }
+                foreach (var match in result.Matches ?? new System.Collections.Generic.List<ReaderIdentityMatch>())
+                    IdentityMatches.Add(match);
+                IdentityConflict = result.Conflict;
+                IdentityMessage = IdentityConflict
+                    ? "⛔ XUNG ĐỘT SĐT/CCCD: không được tự ghép/chọn hồ sơ. Staff phải xác minh tại quầy."
+                    : IdentityMatches.Count > 0
+                    ? "⚠ Đã có " + IdentityMatches.Count +
+                      " hồ sơ trùng! Chọn một dòng và XEM LỊCH SỬ trước khi tiếp nhận."
+                    : "Không tìm thấy hồ sơ trùng; CHƯA xác nhận được khách mới. Phải kiểm tra trực tiếp.";
+            }
+            catch (Exception)
+            { if (version == _identityVersion) IdentityMessage = "Không thể tra cứu. Không tạo hồ sơ mới khi tra cứu thất bại."; }
+            finally
+            {
+                if (version == _identityVersion)
+                {
+                    // Clear CCCD from UI after the lookup; do not retain it in a VM property.
+                    if (id.Length > 0) { _identityCitizen = ""; Notify(nameof(IdentityCitizen)); }
+                    IdentityBusy = false;
+                    (UseMatchedReaderCommand as ActionCommand)?.Refresh();
+                }
+            }
+        }
 
         // Debounce on UI synchronization context; stale HTTP replies must never overwrite newer text.
         private async Task SuggestReadersAsync(string query, int version)

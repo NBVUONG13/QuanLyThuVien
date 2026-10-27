@@ -236,6 +236,38 @@ namespace QuanLyThuVien.Services
             [DataMember(Name = "approve")] public bool Approve { get; set; }
             [DataMember(Name = "note")] public string Note { get; set; }
         }
+        // POST instead of GET: raw phone/CCCD is never placed in a URL/query string.
+        public async Task<IdentityCheckResult> CheckReaderIdentityAsync(string token, string phone, string citizenId)
+        {
+            try
+            {
+                using (var req = NewRequest(HttpMethod.Post,
+                    "http://127.0.0.1:5082/api/readers/identity-check", token))
+                {
+                    req.Content = new StringContent(Serialize(new IdentityCheckRequestDto
+                    { Phone = phone, CitizenId = citizenId }), Encoding.UTF8, "application/json");
+                    using (var response = await Http.SendAsync(req))
+                    {
+                        string body = await response.Content.ReadAsStringAsync();
+                        if (!response.IsSuccessStatusCode)
+                            return new IdentityCheckResult { Message = Error(body, response.StatusCode) };
+                        var parsed = Parse<IdentityCheckResult>(body);
+                        if (parsed != null) parsed.IsSuccess = true;
+                        return parsed ?? new IdentityCheckResult { Message = "Phản hồi tra cứu không hợp lệ." };
+                    }
+                }
+            }
+            catch (Exception ex) when (ex is HttpRequestException || ex is TaskCanceledException ||
+                                      ex is SerializationException || ex is InvalidOperationException)
+            { return new IdentityCheckResult { Message = "Không tra cứu được hồ sơ. Kiểm tra API." }; }
+        }
+        [DataContract]
+        private sealed class IdentityCheckRequestDto
+        {
+            [DataMember(Name = "phone")] public string Phone { get; set; }
+            [DataMember(Name = "citizenId")] public string CitizenId { get; set; }
+        }
+
         private static HttpRequestMessage NewRequest(HttpMethod method, string url, string token)
         {
             var request = new HttpRequestMessage(method, url);
@@ -440,6 +472,36 @@ namespace QuanLyThuVien.Services
         public bool IsSuccess { get; set; }
         public string Message { get; set; }
         public List<BorrowRequestSummary> Requests { get; set; } = new List<BorrowRequestSummary>();
+    }
+
+    [DataContract]
+    public sealed class IdentityCheckResult
+    {
+        public bool IsSuccess { get; set; }
+        [DataMember(Name = "matches")] public List<ReaderIdentityMatch> Matches { get; set; } = new List<ReaderIdentityMatch>();
+        [DataMember(Name = "matchedCount")] public int MatchedCount { get; set; }
+        [DataMember(Name = "conflict")] public bool Conflict { get; set; }
+        [DataMember(Name = "message")] public string Message { get; set; }
+    }
+    [DataContract]
+    public sealed class ReaderIdentityMatch
+    {
+        [DataMember(Name = "userId")] public long UserId { get; set; }
+        [DataMember(Name = "username")] public string Username { get; set; }
+        [DataMember(Name = "readerCode")] public string ReaderCode { get; set; }
+        [DataMember(Name = "fullName")] public string FullName { get; set; }
+        [DataMember(Name = "accountStatus")] public string AccountStatus { get; set; }
+        [DataMember(Name = "matchReason")] public string MatchReason { get; set; }
+        [DataMember(Name = "openCopies")] public long OpenCopies { get; set; }
+        [DataMember(Name = "overdueCopies")] public long OverdueCopies { get; set; }
+        [DataMember(Name = "lateReturns")] public long LateReturns { get; set; }
+        [DataMember(Name = "completedReturns")] public long CompletedReturns { get; set; }
+        [DataMember(Name = "borrowBlocked")] public bool BorrowBlocked { get; set; }
+        [DataMember(Name = "riskLevel")] public string RiskLevel { get; set; }
+        public string Summary => FullName + " · " + ReaderCode + " · " + MatchReason;
+        public string RiskSummary => (BorrowBlocked ? "ĐANG BỊ CẤM · " : "") +
+            "Đang mượn: " + OpenCopies + " · Quá hạn chưa trả: " + OverdueCopies +
+            " · Đã trả trễ: " + LateReturns + " · Đã trả: " + CompletedReturns;
     }
 
 }

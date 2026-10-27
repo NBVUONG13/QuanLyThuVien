@@ -882,6 +882,142 @@ app.MapGet("/api/readers", async (string? query, HttpRequest request, SessionSer
 
 
 
+// STEP 62: Walk-in identity preflight. STAFF ONLY; no raw CCCD in URL/logs/responses.
+// This is read-only: no Guest creation, identity merge, or checkout is performed here.
+app.MapPost("/api/readers/identity-check", async (
+    ReaderIdentityLookupRequest input, HttpRequest request, SessionService sessions,
+    IConfiguration config, CancellationToken ct) =>
+{
+    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    var actor = sessions.Validate(ReadBearerToken(request));
+    if (actor is null) return Results.Unauthorized();
+    if (actor.Role is not ("Staff" or "Admin")) return Results.StatusCode(403);
+
+    string phoneRaw = (input.Phone ?? "").Trim();
+    string citizenRaw = (input.CitizenId ?? "").Trim();
+    if (phoneRaw.Length > 24 || citizenRaw.Length > 20)
+        return Results.BadRequest(new { message = "So lien he/giay to khong hop le." });
+    string phoneDigits = new string(phoneRaw.Where(char.IsDigit).ToArray());
+    if (phoneDigits.StartsWith("84", StringComparison.Ordinal) && phoneDigits.Length == 11)
+        phoneDigits = "0" + phoneDigits.Substring(2);
+    bool hasPhone = phoneRaw.Length > 0;
+    bool hasCitizen = citizenRaw.Length > 0;
+    if (!hasPhone && !hasCitizen)
+        return Results.BadRequest(new { message = "Nhap so dien thoai hoac CCCD de tra cuu." });
+    if (hasPhone && (phoneDigits.Length != 10 || phoneDigits[0] != '0' ||
+                     phoneRaw.Any(c => !char.IsDigit(c) && c != '+' && c != ' ' && c != '-')))
+        return Results.BadRequest(new { message = "Nhap so dien thoai Viet Nam hop le (10 so hoac +84...)." });
+    if (hasCitizen && (citizenRaw.Length != 12 || citizenRaw.Any(c => c < '0' || c > '9')))
+        return Results.BadRequest(new { message = "CCCD phai gom 12 chu so." });
+
+    byte[] fingerprint = Array.Empty<byte>();
+    if (hasCitizen)
+    {
+        // Use the SAME stable server-only key/algorithm for future Guest creation.
+        // If existing citizen fingerprints were created with another algorithm,
+        // they cannot be matched until a controlled migration/re-verification.
+        byte[] key;
+        try { key = Convert.FromBase64String(config["GuestIdentity:HmacKeyBase64"] ?? ""); }
+        catch (FormatException) { key = Array.Empty<byte>(); }
+        if (key.Length < 32)
+            return Results.Json(new { message = "Chua cau hinh GuestIdentity:HmacKeyBase64 trong backend User Secrets." }, statusCode: 503);
+        using var hmac = new HMACSHA256(key);
+        fingerprint = hmac.ComputeHash(Encoding.UTF8.GetBytes(citizenRaw));
+    }
+    string[] phones = hasPhone
+        ? new[] { phoneDigits, "+84" + phoneDigits.Substring(1), "84" + phoneDigits.Substring(1) }
+        : Array.Empty<string>();
+    try
+    {
+        var cs = config.GetConnectionString("AivenPostgres")
+            ?? throw new InvalidOperationException("Missing database connection string");
+        await using var db = new NpgsqlConnection(cs);
+        await db.OpenAsync(ct);
+        const string sql = @"
+            SELECT u.user_id,u.username,rp.reader_code,rp.full_name,u.account_status,
+                   COALESCE((rp.phone_e164=ANY(@phones)),FALSE) AS matched_phone,
+                   COALESCE((rp.citizen_id_fingerprint=@fingerprint),FALSE) AS matched_citizen,
+                   (SELECT COUNT(*) FROM public.borrows b JOIN public.borrow_details d
+                        ON d.borrow_id=b.borrow_id
+                    WHERE b.reader_user_id=u.user_id AND d.closed_at IS NULL) AS open_copies,
+                   (SELECT COUNT(*) FROM public.borrows b JOIN public.borrow_details d
+                        ON d.borrow_id=b.borrow_id
+                    WHERE b.reader_user_id=u.user_id AND d.closed_at IS NULL AND d.due_at<NOW()) AS overdue_copies,
+                   (SELECT COUNT(*) FROM public.borrows b JOIN public.borrow_details d
+                        ON d.borrow_id=b.borrow_id
+                    WHERE b.reader_user_id=u.user_id AND d.close_reason='returned'
+                      AND d.returned_at>d.due_at) AS late_returns,
+                   (SELECT COUNT(*) FROM public.borrows b JOIN public.borrow_details d
+                        ON d.borrow_id=b.borrow_id
+                    WHERE b.reader_user_id=u.user_id AND d.close_reason='returned') AS completed_returns,
+                   COALESCE((SELECT a.action FROM public.audit_logs a
+                     WHERE a.entity_type='reader_borrow_access'
+                       AND a.entity_id=u.user_id::text
+                       AND a.action IN ('reader_borrow_block','reader_borrow_unblock')
+                     ORDER BY a.audit_id DESC LIMIT 1),'') AS last_ban_decision
+            FROM public.reader_profiles rp
+            JOIN public.users u ON u.user_id=rp.user_id
+            JOIN public.roles role ON role.role_id=u.role_id AND role.role_name='Reader'
+            WHERE (@has_phone AND rp.phone_e164=ANY(@phones))
+               OR (@has_citizen AND rp.citizen_id_fingerprint=@fingerprint)
+            ORDER BY u.user_id LIMIT 6;";
+        await using var cmd = new NpgsqlCommand(sql, db);
+        cmd.Parameters.Add("phones", NpgsqlDbType.Array | NpgsqlDbType.Text).Value = phones;
+        cmd.Parameters.Add("fingerprint", NpgsqlDbType.Bytea).Value = fingerprint;
+        cmd.Parameters.AddWithValue("has_phone", hasPhone);
+        cmd.Parameters.AddWithValue("has_citizen", hasCitizen);
+        await using var rd = await cmd.ExecuteReaderAsync(ct);
+        var matches = new List<object>();
+        bool identityConflict = false;
+        while (await rd.ReadAsync(ct))
+        {
+            bool matchedPhone = rd.GetBoolean(5), matchedCitizen = rd.GetBoolean(6);
+            // If BOTH are supplied, each must belong to the SAME profile.
+            if (hasPhone && hasCitizen && !(matchedPhone && matchedCitizen)) identityConflict = true;
+            long overdue = rd.GetInt64(8), late = rd.GetInt64(9), returned = rd.GetInt64(10);
+            string ban = rd.GetString(11);
+            bool blocked = ban == "reader_borrow_block";
+            string risk = blocked ? "blocked" : overdue > 0 ? "red"
+                : late == 0 && returned > 0 ? "green"
+                : late <= 2 && late > 0 ? "yellow"
+                : late > 2 ? "orange" : "neutral";
+            matches.Add(new
+            {
+                userId = rd.GetInt64(0),
+                username = rd.GetString(1),
+                readerCode = rd.GetString(2),
+                fullName = rd.GetString(3),
+                accountStatus = rd.GetString(4),
+                matchReason = matchedPhone && matchedCitizen ? "Trung SĐT va CCCD"
+                    : matchedPhone ? "Trung SĐT" : "Trung CCCD",
+                openCopies = rd.GetInt64(7),
+                overdueCopies = overdue,
+                lateReturns = late,
+                completedReturns = returned,
+                borrowBlocked = blocked,
+                riskLevel = risk
+            });
+        }
+        // Shared family phone OR two identifiers belonging to different people: NEVER auto-link.
+        bool conflict = matches.Count > 1 || identityConflict;
+        return Results.Ok(new
+        {
+            matches,
+            matchedCount = matches.Count,
+            conflict,
+            message = matches.Count == 0 ? "Chua tim thay ho so trung. Chua phai xac nhan khach moi."
+                : conflict ? "Canh bao: SĐT/CCCD khong cung khop mot ho so, hoac co nhieu ho so. Khong duoc tu lien ket."
+                : "Da co ho so voi thong tin trung. Xem lich su truoc khi tiep nhan."
+        });
+    }
+    catch (OperationCanceledException) when (ct.IsCancellationRequested) { return Results.StatusCode(499); }
+    catch (Exception ex)
+    {
+        app.Logger.LogError("Walk-in identity preflight failed: {Type}", ex.GetType().Name);
+        return Results.Json(new { message = "Khong tra cuu duoc ho so. Khong tao Guest moi khi chua kiem tra trung." }, statusCode: 503);
+    }
+});
+
 // STEP 57 - Staff/Admin reader insights and borrow ban history. Uses existing audit_logs,
 // no DDL, no new column. Ban is an event-sourced decision distinct from login status.
 app.MapGet("/api/readers/{readerId:long}/insights", async (long readerId,
@@ -2332,3 +2468,5 @@ public sealed record NewBorrowRequest(List<NewBorrowRequestItem> Items, string? 
 public sealed record NewBorrowRequestItem(long BookId, int RequestedDays);
 
 public sealed record ReviewBorrowRequest(bool Approve, string? Note);
+
+public sealed record ReaderIdentityLookupRequest(string? Phone, string? CitizenId);
