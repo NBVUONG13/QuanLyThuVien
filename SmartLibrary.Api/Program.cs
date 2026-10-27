@@ -1803,7 +1803,22 @@ app.MapGet("/api/borrow-requests", async (HttpRequest request, SessionService se
             SELECT br.request_id,br.request_code,u.username,br.status,br.requested_at,
                    COALESCE(br.note,''),COUNT(i.request_item_id),
                    COALESCE(string_agg(b.title || ' (' || i.requested_days || ' ngay)',
-                                      '; ' ORDER BY i.request_item_id),'')
+                                      '; ' ORDER BY i.request_item_id),''),
+                   (SELECT COUNT(*) FROM public.borrow_details bd
+                     JOIN public.borrows bo ON bo.borrow_id=bd.borrow_id
+                     WHERE bo.reader_user_id=br.reader_user_id
+                       AND bd.returned_at IS NOT NULL AND bd.returned_at>bd.due_at),
+                   (SELECT COUNT(*) FROM public.borrow_details bd
+                     JOIN public.borrows bo ON bo.borrow_id=bd.borrow_id
+                     WHERE bo.reader_user_id=br.reader_user_id
+                       AND bd.closed_at IS NULL AND bd.due_at<NOW()),
+                   COALESCE((SELECT rp.full_name FROM public.reader_profiles rp
+                             WHERE rp.user_id=br.reader_user_id),u.username),
+                   br.reader_user_id,
+                   (SELECT COUNT(*) FROM public.borrow_details bd
+                     JOIN public.borrows bo ON bo.borrow_id=bd.borrow_id
+                     WHERE bo.reader_user_id=br.reader_user_id
+                       AND bd.returned_at IS NOT NULL)
             FROM public.borrow_requests br
             JOIN public.users u ON u.user_id=br.reader_user_id
             LEFT JOIN public.borrow_request_items i ON i.request_id=br.request_id
@@ -1824,7 +1839,14 @@ app.MapGet("/api/borrow-requests", async (HttpRequest request, SessionService se
             requestedAt = reader.GetDateTime(4).ToUniversalTime().ToString("yyyy-MM-dd HH:mm 'UTC'", CultureInfo.InvariantCulture),
             note = reader.GetString(5),
             itemCount = reader.GetInt64(6),
-            itemsSummary = reader.GetString(7)
+            itemsSummary = reader.GetString(7),
+            lateReturns = reader.GetInt64(8),
+            openOverdue = reader.GetInt64(9),
+            readerFullName = reader.GetString(10),
+            readerUserId = reader.GetInt64(11),
+            completedReturns = reader.GetInt64(12),
+            riskLevel = reader.GetInt64(9) > 0 ? "red" : reader.GetInt64(8) > 0 && reader.GetInt64(8) <= 2 ? "yellow"
+                : reader.GetInt64(8) > 2 ? "orange" : reader.GetInt64(12) > 0 ? "green" : "neutral"
         });
         return Results.Ok(new { requests = result });
     }
@@ -1943,6 +1965,210 @@ app.MapPost("/api/borrow-requests", async (NewBorrowRequest input, HttpRequest r
     {
         app.Logger.LogError("Create borrow request failed: {Type}", ex.GetType().Name);
         return Results.Json(new { message = "Khong the tao don muon." }, statusCode: 503);
+    }
+});
+
+
+// STEP 59: staff review entire multi-title request; all-or-nothing checkout transaction.
+// A request is NOT a loan until all actual physical copies are assigned here.
+app.MapPost("/api/borrow-requests/{requestId:long}/review", async (
+    long requestId, ReviewBorrowRequest body, HttpRequest request,
+    SessionService sessions, IConfiguration config, CancellationToken ct) =>
+{
+    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    var actor = sessions.Validate(ReadBearerToken(request));
+    if (actor is null) return Results.Unauthorized();
+    if (actor.Role is not ("Staff" or "Admin")) return Results.StatusCode(403);
+    if (requestId <= 0 || (body.Note?.Length ?? 0) > 500 ||
+        (!body.Approve && string.IsNullOrWhiteSpace(body.Note)))
+        return Results.BadRequest(new { message = "Tu choi phai co ly do; ghi chu toi da 500 ky tu." });
+    try
+    {
+        var cs = config.GetConnectionString("AivenPostgres")
+            ?? throw new InvalidOperationException("Database configuration missing");
+        await using var db = new NpgsqlConnection(cs);
+        await db.OpenAsync(ct);
+        await using var tx = await db.BeginTransactionAsync(ct);
+        // Read owner, then lock reader profile FIRST to serialize with checkout and borrow bans.
+        long owner;
+        await using (var ownerCmd = new NpgsqlCommand(
+            "SELECT reader_user_id FROM public.borrow_requests WHERE request_id=@id", db, tx))
+        {
+            ownerCmd.Parameters.AddWithValue("id", requestId);
+            var ownerValue = await ownerCmd.ExecuteScalarAsync(ct);
+            if (ownerValue is null) return Results.NotFound();
+            owner = Convert.ToInt64(ownerValue);
+        }
+        int maxCopies, maxDays;
+        long tierId;
+        await using (var cap = new NpgsqlCommand(@"
+            SELECT rp.tier_id, COALESCE(rp.override_max_active_copies,t.max_active_copies),
+                   COALESCE(rp.override_max_loan_days,t.max_loan_days)
+            FROM public.reader_profiles rp
+            JOIN public.reader_tiers t ON t.tier_id=rp.tier_id
+            JOIN public.users u ON u.user_id=rp.user_id
+            WHERE rp.user_id=@user AND u.account_status='active' AND t.is_active=TRUE
+            FOR UPDATE OF rp;", db, tx))
+        {
+            cap.Parameters.AddWithValue("user", owner);
+            await using var rr = await cap.ExecuteReaderAsync(ct);
+            if (!await rr.ReadAsync(ct)) return Results.StatusCode(403);
+            tierId = rr.GetInt64(0); maxCopies = rr.GetInt32(1); maxDays = rr.GetInt32(2);
+        }
+        await using (var req = new NpgsqlCommand(@"
+            SELECT status FROM public.borrow_requests WHERE request_id=@id
+            AND reader_user_id=@owner FOR UPDATE;", db, tx))
+        {
+            req.Parameters.AddWithValue("id", requestId);
+            req.Parameters.AddWithValue("owner", owner);
+            if ((await req.ExecuteScalarAsync(ct)) as string != "pending")
+                return Results.Conflict(new { message = "Don khong con o trang thai cho duyet." });
+        }
+        if (!body.Approve)
+        {
+            await using (var reject = new NpgsqlCommand(@"
+                UPDATE public.borrow_requests
+                SET status='rejected',reviewed_at=NOW(),reviewed_by_user_id=@actor,review_note=@note
+                WHERE request_id=@id;", db, tx))
+            {
+                reject.Parameters.AddWithValue("id", requestId);
+                reject.Parameters.AddWithValue("actor", actor.UserId);
+                reject.Parameters.AddWithValue("note", body.Note!.Trim());
+                await reject.ExecuteNonQueryAsync(ct);
+            }
+            await using (var items = new NpgsqlCommand(@"
+                UPDATE public.borrow_request_items SET status='rejected'
+                WHERE request_id=@id AND status='pending';", db, tx))
+            {
+                items.Parameters.AddWithValue("id", requestId);
+                await items.ExecuteNonQueryAsync(ct);
+            }
+            await tx.CommitAsync(ct);
+            return Results.Ok(new { message = "Da tu choi don va luu ly do." });
+        }
+        // Prevent approval of a request submitted BEFORE a Staff ban.
+        await using (var ban = new NpgsqlCommand(@"
+            SELECT action FROM public.audit_logs
+            WHERE entity_type='reader_borrow_access' AND entity_id=@owner
+              AND action IN ('reader_borrow_block','reader_borrow_unblock')
+            ORDER BY audit_id DESC LIMIT 1;", db, tx))
+        {
+            ban.Parameters.AddWithValue("owner", owner.ToString(CultureInfo.InvariantCulture));
+            if ((await ban.ExecuteScalarAsync(ct)) as string == "reader_borrow_block")
+                return Results.StatusCode(403);
+        }
+        var itemsToLoan = new List<(long itemId, long bookId, int days)>();
+        await using (var items = new NpgsqlCommand(@"
+            SELECT i.request_item_id,i.book_id,i.requested_days
+            FROM public.borrow_request_items i
+            JOIN public.books b ON b.book_id=i.book_id
+            WHERE i.request_id=@id AND i.status='pending' AND b.is_visible=TRUE
+            ORDER BY i.book_id;", db, tx))
+        {
+            items.Parameters.AddWithValue("id", requestId);
+            await using var rr = await items.ExecuteReaderAsync(ct);
+            while (await rr.ReadAsync(ct))
+                itemsToLoan.Add((rr.GetInt64(0), rr.GetInt64(1), rr.GetInt32(2)));
+        }
+        if (itemsToLoan.Count == 0 || itemsToLoan.Count > 5)
+            return Results.Conflict(new { message = "Don khong co 1-5 sach hop le." });
+        await using (var total = new NpgsqlCommand(@"
+            SELECT COUNT(*) FROM public.borrow_request_items WHERE request_id=@id;", db, tx))
+        {
+            total.Parameters.AddWithValue("id", requestId);
+            if (Convert.ToInt64(await total.ExecuteScalarAsync(ct)) != itemsToLoan.Count)
+                return Results.Conflict(new { message = "Co dau sach khong con hop le trong don." });
+        }
+        if (itemsToLoan.Any(x => x.days > maxDays))
+            return Results.Conflict(new { message = $"Hang doc gia chi muon toi da {maxDays} ngay." });
+        await using (var count = new NpgsqlCommand(@"
+            SELECT COUNT(*) FROM public.borrow_details d JOIN public.borrows b ON b.borrow_id=d.borrow_id
+            WHERE b.reader_user_id=@owner AND d.closed_at IS NULL;", db, tx))
+        {
+            count.Parameters.AddWithValue("owner", owner);
+            var open = Convert.ToInt64(await count.ExecuteScalarAsync(ct));
+            if (open + itemsToLoan.Count > maxCopies)
+                return Results.Conflict(new { message = $"Reader dang muon {open} cuon; han muc {maxCopies}." });
+        }
+        // Lock each physical copy; no partial writes if any title has no available active copy.
+        var assigned = new List<(long itemId, long copyId, int days)>();
+        foreach (var item in itemsToLoan)
+        {
+            await using var pick = new NpgsqlCommand(@"
+                SELECT c.copy_id FROM public.book_copies c
+                WHERE c.book_id=@book AND c.condition_status='active'
+                  AND NOT EXISTS (SELECT 1 FROM public.borrow_details d
+                                  WHERE d.book_copy_id=c.copy_id AND d.closed_at IS NULL)
+                ORDER BY c.copy_id LIMIT 1 FOR UPDATE OF c SKIP LOCKED;", db, tx);
+            pick.Parameters.AddWithValue("book", item.bookId);
+            var found = await pick.ExecuteScalarAsync(ct);
+            if (found is null)
+                return Results.Conflict(new { message = $"Dau sach ID {item.bookId} khong co cuon vat ly kha dung. Khong duyet don." });
+            assigned.Add((item.itemId, Convert.ToInt64(found), item.days));
+        }
+        var at = DateTime.UtcNow;
+        long borrowId;
+        await using (var borrow = new NpgsqlCommand(@"
+            INSERT INTO public.borrows(reader_user_id,issued_by_user_id,borrowed_at,notes)
+            VALUES(@reader,@staff,@at,@note) RETURNING borrow_id;", db, tx))
+        {
+            borrow.Parameters.AddWithValue("reader", owner);
+            borrow.Parameters.AddWithValue("staff", actor.UserId);
+            borrow.Parameters.AddWithValue("at", NpgsqlDbType.TimestampTz, at);
+            borrow.Parameters.AddWithValue("note", (object?)$"Don #{requestId}. {body.Note}" ?? DBNull.Value);
+            borrowId = Convert.ToInt64(await borrow.ExecuteScalarAsync(ct));
+        }
+        foreach (var item in assigned)
+        {
+            var due = at.AddDays(item.days);
+            await using (var detail = new NpgsqlCommand(@"
+                INSERT INTO public.borrow_details
+                  (borrow_id,book_copy_id,selected_loan_days,initial_due_at,due_at,
+                   applied_tier_id,applied_max_loan_days,applied_max_active_copies)
+                VALUES(@borrow,@copy,@days,@due,@due,@tier,@maxdays,@maxcopies);", db, tx))
+            {
+                detail.Parameters.AddWithValue("borrow", borrowId);
+                detail.Parameters.AddWithValue("copy", item.copyId);
+                detail.Parameters.AddWithValue("days", item.days);
+                detail.Parameters.AddWithValue("due", NpgsqlDbType.TimestampTz, due);
+                detail.Parameters.AddWithValue("tier", tierId);
+                detail.Parameters.AddWithValue("maxdays", maxDays);
+                detail.Parameters.AddWithValue("maxcopies", maxCopies);
+                await detail.ExecuteNonQueryAsync(ct);
+            }
+            await using (var itemUpdate = new NpgsqlCommand(@"
+                UPDATE public.borrow_request_items
+                SET status='fulfilled',assigned_copy_id=@copy
+                WHERE request_item_id=@id AND status='pending';", db, tx))
+            {
+                itemUpdate.Parameters.AddWithValue("copy", item.copyId);
+                itemUpdate.Parameters.AddWithValue("id", item.itemId);
+                if (await itemUpdate.ExecuteNonQueryAsync(ct) != 1)
+                    throw new InvalidOperationException("Request item was concurrently changed.");
+            }
+        }
+        await using (var done = new NpgsqlCommand(@"
+            UPDATE public.borrow_requests
+            SET status='fulfilled',reviewed_at=NOW(),reviewed_by_user_id=@actor,review_note=@note
+            WHERE request_id=@id AND status='pending';", db, tx))
+        {
+            done.Parameters.AddWithValue("id", requestId);
+            done.Parameters.AddWithValue("actor", actor.UserId);
+            done.Parameters.AddWithValue("note", (object?)body.Note?.Trim() ?? DBNull.Value);
+            if (await done.ExecuteNonQueryAsync(ct) != 1)
+                throw new InvalidOperationException("Request was concurrently changed.");
+        }
+        await tx.CommitAsync(ct);
+        return Results.Ok(new { message = $"Da duyet don va giao {assigned.Count} cuon. Phieu muon #{borrowId}.", borrowId });
+    }
+    catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UniqueViolation)
+    { return Results.Conflict(new { message = "Mot cuon vua duoc muon. Tai lai va thu duyet." }); }
+    catch (OperationCanceledException) when (ct.IsCancellationRequested)
+    { return Results.StatusCode(499); }
+    catch (Exception ex)
+    {
+        app.Logger.LogError(ex, "Borrow request review failed");
+        return Results.Json(new { message = "Khong xu ly duoc don. Kiem tra API console." }, statusCode: 503);
     }
 });
 
@@ -2104,3 +2330,5 @@ public static class VietnameseSearch
 
 public sealed record NewBorrowRequest(List<NewBorrowRequestItem> Items, string? Note);
 public sealed record NewBorrowRequestItem(long BookId, int RequestedDays);
+
+public sealed record ReviewBorrowRequest(bool Approve, string? Note);

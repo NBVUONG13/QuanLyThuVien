@@ -224,6 +224,18 @@ namespace QuanLyThuVien.Services
                                    requestId + "/cancel", token, "{}");
         }
 
+        public Task<LoanActionResult> ReviewBorrowRequestAsync(string token, long requestId, bool approve, string note)
+        {
+            return SendActionAsync("http://127.0.0.1:5082/api/borrow-requests/" + requestId + "/review",
+                token, Serialize(new ReviewRequestDto { Approve = approve, Note = note }));
+        }
+
+        [DataContract]
+        private sealed class ReviewRequestDto
+        {
+            [DataMember(Name = "approve")] public bool Approve { get; set; }
+            [DataMember(Name = "note")] public string Note { get; set; }
+        }
         private static HttpRequestMessage NewRequest(HttpMethod method, string url, string token)
         {
             var request = new HttpRequestMessage(method, url);
@@ -411,6 +423,16 @@ namespace QuanLyThuVien.Services
         [DataMember(Name = "note")] public string Note { get; set; }
         [DataMember(Name = "itemCount")] public long ItemCount { get; set; }
         [DataMember(Name = "itemsSummary")] public string ItemsSummary { get; set; }
+        [DataMember(Name = "readerFullName")] public string ReaderFullName { get; set; }
+        [DataMember(Name = "readerUserId")] public long ReaderUserId { get; set; }
+        [DataMember(Name = "lateReturns")] public long LateReturns { get; set; }
+        [DataMember(Name = "openOverdue")] public long OpenOverdue { get; set; }
+        [DataMember(Name = "riskLevel")] public string RiskLevel { get; set; }
+        [DataMember(Name = "completedReturns")] public long CompletedReturns { get; set; }
+        public string RiskLabel => OpenOverdue > 0 ? "● ĐANG QUÁ HẠN (" + OpenOverdue + ")"
+            : LateReturns >= 1 && LateReturns <= 2 ? "● TRẢ TRỄ " + LateReturns + " LẦN"
+            : LateReturns > 2 ? "● TRẢ TRỄ NHIỀU (" + LateReturns + ")"
+            : CompletedReturns > 0 ? "● TRẢ ĐÚNG HẠN" : "● CHƯA CÓ LỊCH SỬ";
         public bool CanCancel => Status == "pending";
     }
     public sealed class BorrowRequestListResult

@@ -97,10 +97,29 @@ namespace QuanLyThuVien.ViewModels
             };
             Loans = new BorrowReturnViewModel(_token, Role);
             Requests = new BorrowRequestViewModel(_token, Role);
+            Requests.ReaderDetailRequested += username => { _ = OpenRequestReaderAsync(username); };
             Status = "Đã xác thực phiên: " + Username + " (" + Role + ")";
 
             // Open the bookstore-style home page immediately after login.
             await NavigateHomeAsync();
+        }
+
+        private async Task OpenRequestReaderAsync(string username)
+        {
+            if (!CanManage || ReaderPanel == null || string.IsNullOrWhiteSpace(username)) return;
+            ReaderPanel.Query = username;
+            await ReaderPanel.LoadAsync();
+            foreach (var r in ReaderPanel.Readers)
+            {
+                if (string.Equals(r.Username, username, StringComparison.OrdinalIgnoreCase))
+                {
+                    ReaderPanel.SelectedReader = r;
+                    ReaderPanel.OpenReaderDetailsCommand.Execute(r);
+                    return;
+                }
+            }
+            // Show Reader list with the search result/error instead of leaving user in place.
+            CurrentPage = ReaderPanel;
         }
 
         private async Task NavigateHomeAsync()
@@ -825,6 +844,7 @@ namespace QuanLyThuVien.ViewModels
         private int _searchVersion;
         private string _message = "", _searchText = "", _daysText = "14", _note = "";
         private string _catalogStatus = "Đang tải danh mục đầu sách...";
+        private string _reviewNote = "";
         private LoanBookSuggestion _selectedSuggestion;
         private BorrowRequestCartItem _selectedCartItem;
         private BorrowRequestSummary _selectedRequest;
@@ -843,9 +863,24 @@ namespace QuanLyThuVien.ViewModels
                 _ => IsReader && !Busy && Cart.Count > 0);
             CancelRequestCommand = new AsyncCommand(_ => CancelAsync(),
                 _ => IsReader && !Busy && SelectedRequest != null && SelectedRequest.CanCancel);
+            ApproveRequestCommand = new AsyncCommand(_ => ReviewAsync(true),
+                _ => CanManage && !Busy && SelectedRequest != null && SelectedRequest.Status == "pending");
+            RejectRequestCommand = new AsyncCommand(_ => ReviewAsync(false),
+                _ => CanManage && !Busy && SelectedRequest != null && SelectedRequest.Status == "pending");
+            ViewReaderCommand = new ActionCommand(parameter =>
+            {
+                if (!CanManage) return;
+                var target = parameter as BorrowRequestSummary ?? SelectedRequest;
+                if (target != null) ReaderDetailRequested?.Invoke(target.ReaderUsername);
+            }, _ => CanManage);
         }
         public bool IsReader { get; }
         public bool CanManage { get; }
+        public event Action<string> ReaderDetailRequested;
+        public string ReviewNote { get => _reviewNote; set => Set(ref _reviewNote, value); }
+        public ICommand ApproveRequestCommand { get; }
+        public ICommand RejectRequestCommand { get; }
+        public ICommand ViewReaderCommand { get; }
         public ObservableCollection<LoanBookSuggestion> Suggestions { get; } =
             new ObservableCollection<LoanBookSuggestion>();
         public ObservableCollection<BorrowRequestCartItem> Cart { get; } =
@@ -918,7 +953,11 @@ namespace QuanLyThuVien.ViewModels
             set
             {
                 if (Set(ref _selectedRequest, value))
+                {
                     (CancelRequestCommand as AsyncCommand)?.Refresh();
+                    (ApproveRequestCommand as AsyncCommand)?.Refresh();
+                    (RejectRequestCommand as AsyncCommand)?.Refresh();
+                }
             }
         }
         private void RefreshCommands()
@@ -928,6 +967,8 @@ namespace QuanLyThuVien.ViewModels
             (RemoveBookCommand as ActionCommand)?.Refresh();
             (SubmitCommand as AsyncCommand)?.Refresh();
             (CancelRequestCommand as AsyncCommand)?.Refresh();
+            (ApproveRequestCommand as AsyncCommand)?.Refresh();
+            (RejectRequestCommand as AsyncCommand)?.Refresh();
         }
         private async Task SearchAsync(string query, int version)
         {
@@ -1051,6 +1092,27 @@ namespace QuanLyThuVien.ViewModels
             catch (Exception) { Message = "Không gửi được yêu cầu."; }
             finally { Busy = false; }
         }
+        private async Task ReviewAsync(bool approve)
+        {
+            if (!CanManage || Busy || SelectedRequest == null || SelectedRequest.Status != "pending") return;
+            if (!approve && string.IsNullOrWhiteSpace(ReviewNote))
+            { Message = "Vui lòng nhập lý do từ chối đơn."; return; }
+            long id = SelectedRequest.RequestId;
+            Busy = true;
+            Message = approve ? "Đang kiểm tra kho và duyệt toàn bộ đơn..." : "Đang từ chối đơn...";
+            try
+            {
+                var result = await _api.ReviewBorrowRequestAsync(_token, id, approve, ReviewNote);
+                Message = result.Message;
+                if (!result.IsSuccess) return;
+                ReviewNote = "";
+                await ReloadAsync();
+                Message = result.Message;
+            }
+            catch (Exception) { Message = "Không xử lý được đơn. Kiểm tra API."; }
+            finally { Busy = false; }
+        }
+
         private async Task CancelAsync()
         {
             if (!IsReader || Busy || SelectedRequest == null || !SelectedRequest.CanCancel) return;
