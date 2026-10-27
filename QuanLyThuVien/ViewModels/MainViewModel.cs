@@ -25,6 +25,7 @@ namespace QuanLyThuVien.ViewModels
             DashboardCommand = new AsyncCommand(_ => NavigateDashboardAsync());
             StaffCommand = new AsyncCommand(_ => NavigateStaffAsync(), _ => IsAdmin);
             ReaderCommand = new AsyncCommand(_ => NavigateReadersAsync(), _ => IsAuthenticated);
+            LoansCommand = new AsyncCommand(_ => NavigateLoansAsync(), _ => IsAuthenticated);
             LogoutCommand = new AsyncCommand(_ => LogoutAsync());
             PendingCommand = new ActionCommand(p =>
             {
@@ -37,6 +38,7 @@ namespace QuanLyThuVien.ViewModels
         public BookManagementViewModel Books { get; private set; }
         public HRManagementViewModel Staff { get; private set; }
         public ReaderManagementViewModel ReaderPanel { get; private set; }
+        public BorrowReturnViewModel Loans { get; private set; }
         public object CurrentPage { get => _currentPage; private set => Set(ref _currentPage, value); }
         public string Username { get => _username; private set => Set(ref _username, value); }
         public string Role { get => _role; private set => Set(ref _role, value); }
@@ -50,6 +52,7 @@ namespace QuanLyThuVien.ViewModels
         public ICommand DashboardCommand { get; }
         public ICommand StaffCommand { get; }
         public ICommand ReaderCommand { get; }
+        public ICommand LoansCommand { get; }
         public ICommand LogoutCommand { get; }
         public ICommand PendingCommand { get; }
 
@@ -72,11 +75,13 @@ namespace QuanLyThuVien.ViewModels
             Notify(nameof(CanManage));
             (StaffCommand as AsyncCommand)?.Refresh();
             (ReaderCommand as AsyncCommand)?.Refresh();
+            (LoansCommand as AsyncCommand)?.Refresh();
 
             // Reuse one BookManagementViewModel for all browsing/search/metadata/copies work.
             Books = new BookManagementViewModel(_token, Role);
             if (IsAdmin) Staff = new HRManagementViewModel(_token);
             ReaderPanel = new ReaderManagementViewModel(_token, Role);
+            Loans = new BorrowReturnViewModel(_token, Role);
             Status = "Đã xác thực phiên: " + Username + " (" + Role + ")";
 
             // Open the bookstore-style home page immediately after login.
@@ -109,6 +114,13 @@ namespace QuanLyThuVien.ViewModels
             if (!IsAuthenticated || ReaderPanel == null) return;
             CurrentPage = ReaderPanel;
             await ReaderPanel.LoadAsync();
+        }
+
+        private async Task NavigateLoansAsync()
+        {
+            if (!IsAuthenticated || Loans == null) return;
+            CurrentPage = Loans;
+            await Loans.LoadAsync();
         }
 
         private async Task LogoutAsync()
@@ -296,6 +308,175 @@ namespace QuanLyThuVien.ViewModels
             EditFullName = Me?.FullName ?? "";
             EditPhone = Me?.Phone ?? "";
             Message = "Đã khôi phục nội dung từ hồ sơ hiện tại.";
+        }
+    }
+
+
+
+    // Step54: lending domain lives in a dedicated VM TYPE, in the existing MainViewModel.cs
+    // so the user does not need to add an otherwise empty/duplicate screen or update csproj.
+    public sealed class BorrowReturnViewModel : MvvmBase
+    {
+        private readonly string _token;
+        private readonly LoanApiClient _api = new LoanApiClient();
+        private string _message = "", _readerUsername = "", _copyCode = "", _loanDays = "14", _copyQuery = "";
+        private bool _busy;
+        private LoanItem _selectedLoan;
+        private AvailableLoanCopy _selectedCopy;
+
+        public BorrowReturnViewModel(string token, string role)
+        {
+            _token = token;
+            CanManage = role == "Staff" || role == "Admin";
+            IsReader = role == "Reader";
+            RefreshCommand = new AsyncCommand(_ => LoadAsync(), _ => !Busy);
+            SearchAvailableCommand = new AsyncCommand(_ => SearchCopiesAsync(), _ => CanManage && !Busy);
+            CheckoutCommand = new AsyncCommand(_ => CheckoutAsync(), _ => CanManage && !Busy);
+            ReturnCommand = new AsyncCommand(_ => ReturnAsync(),
+                _ => CanManage && !Busy && SelectedLoan != null && SelectedLoan.IsOpen);
+        }
+        public bool CanManage { get; }
+        public bool IsReader { get; }
+        public ObservableCollection<LoanItem> Loans { get; } = new ObservableCollection<LoanItem>();
+        public ObservableCollection<AvailableLoanCopy> AvailableCopies { get; } = new ObservableCollection<AvailableLoanCopy>();
+        public string Message { get => _message; private set => Set(ref _message, value); }
+        public string ReaderUsername { get => _readerUsername; set => Set(ref _readerUsername, value); }
+        public string CopyCode { get => _copyCode; set => Set(ref _copyCode, value); }
+        public string LoanDays { get => _loanDays; set => Set(ref _loanDays, value); }
+        public string CopyQuery { get => _copyQuery; set => Set(ref _copyQuery, value); }
+        public bool Busy
+        {
+            get => _busy;
+            private set
+            {
+                if (!Set(ref _busy, value)) return;
+                (RefreshCommand as AsyncCommand)?.Refresh();
+                (SearchAvailableCommand as AsyncCommand)?.Refresh();
+                (CheckoutCommand as AsyncCommand)?.Refresh();
+                (ReturnCommand as AsyncCommand)?.Refresh();
+            }
+        }
+        public LoanItem SelectedLoan
+        {
+            get => _selectedLoan;
+            set
+            {
+                if (!Set(ref _selectedLoan, value)) return;
+                (ReturnCommand as AsyncCommand)?.Refresh();
+            }
+        }
+        public AvailableLoanCopy SelectedCopy
+        {
+            get => _selectedCopy;
+            set
+            {
+                if (!Set(ref _selectedCopy, value)) return;
+                if (value != null) CopyCode = value.CopyCode;
+            }
+        }
+        public ICommand RefreshCommand { get; }
+        public ICommand SearchAvailableCommand { get; }
+        public ICommand CheckoutCommand { get; }
+        public ICommand ReturnCommand { get; }
+
+        private static void Replace<T>(ObservableCollection<T> target, System.Collections.Generic.IEnumerable<T> items)
+        {
+            target.Clear();
+            if (items == null) return;
+            foreach (var item in items) target.Add(item);
+        }
+        private async Task<bool> FetchLoansAsync()
+        {
+            var response = await _api.GetLoansAsync(_token);
+            if (!response.IsSuccess) { Message = response.Message; return false; }
+            Replace(Loans, response.Loans);
+            SelectedLoan = null;
+            return true;
+        }
+        private async Task<bool> FetchCopiesAsync()
+        {
+            if (!CanManage) return true;
+            var response = await _api.GetAvailableCopiesAsync(_token, CopyQuery);
+            if (!response.IsSuccess) { Message = response.Message; return false; }
+            Replace(AvailableCopies, response.Copies);
+            SelectedCopy = null;
+            return true;
+        }
+        public async Task LoadAsync()
+        {
+            if (Busy) return;
+            Busy = true;
+            Message = "Đang tải danh sách mượn / trả...";
+            try
+            {
+                bool loansOk = await FetchLoansAsync();
+                bool copiesOk = loansOk && await FetchCopiesAsync();
+                if (loansOk && copiesOk)
+                    Message = Loans.Count == 0
+                        ? "Chưa có lượt mượn sách nào."
+                        : "Đã tải " + Loans.Count + " lượt mượn/trả gần nhất (tối đa 100).";
+            }
+            catch (Exception) { Message = "Không tải được dữ liệu mượn trả lúc này."; }
+            finally { Busy = false; }
+        }
+        private async Task SearchCopiesAsync()
+        {
+            if (!CanManage || Busy) return;
+            if ((CopyQuery ?? "").Length > 80) { Message = "Từ khóa tối đa 80 ký tự."; return; }
+            Busy = true;
+            Message = "Đang tìm cuốn còn khả dụng...";
+            try
+            {
+                if (await FetchCopiesAsync())
+                    Message = AvailableCopies.Count == 0 ? "Không có cuốn nào có thể mượn."
+                        : "Tìm thấy " + AvailableCopies.Count + " cuốn còn sẵn (tối đa 100).";
+            }
+            catch (Exception) { Message = "Không tải được danh sách bản sao."; }
+            finally { Busy = false; }
+        }
+        private async Task CheckoutAsync()
+        {
+            if (!CanManage || Busy) return;
+            int days;
+            if (string.IsNullOrWhiteSpace(ReaderUsername) || string.IsNullOrWhiteSpace(CopyCode) ||
+                !int.TryParse(LoanDays, out days) || days < 1 || days > 90)
+            {
+                Message = "Nhập username Reader, mã cuốn và số ngày mượn từ 1 đến 90.";
+                return;
+            }
+            Busy = true;
+            Message = "Đang tạo phiếu mượn...";
+            try
+            {
+                var result = await _api.CheckoutAsync(_token, ReaderUsername.Trim(), CopyCode.Trim(), days);
+                Message = result.Message;
+                if (!result.IsSuccess) return;
+                CopyCode = "";
+                // Refresh both ObservableCollections in-place for immediate UI updates.
+                await FetchLoansAsync();
+                await FetchCopiesAsync();
+                Message = result.Message;
+            }
+            catch (Exception) { Message = "Không thể tạo phiếu mượn lúc này."; }
+            finally { Busy = false; }
+        }
+        private async Task ReturnAsync()
+        {
+            if (!CanManage || Busy || SelectedLoan == null || !SelectedLoan.IsOpen) return;
+            long detailId = SelectedLoan.BorrowDetailId;
+            Busy = true;
+            Message = "Đang ghi nhận trả cuốn...";
+            try
+            {
+                var result = await _api.ReturnAsync(_token, detailId);
+                Message = result.Message;
+                if (!result.IsSuccess) return;
+                await FetchLoansAsync();
+                await FetchCopiesAsync();
+                Message = result.Message;
+            }
+            catch (Exception) { Message = "Không thể ghi nhận trả sách lúc này."; }
+            finally { Busy = false; }
         }
     }
 

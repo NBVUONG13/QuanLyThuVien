@@ -221,6 +221,130 @@
             </Grid>
         </DataTemplate>
 
+
+        <!-- Borrow / return uses existing MainWindow shell; VM is in MainViewModel.cs. -->
+        <DataTemplate DataType="{x:Type vm:BorrowReturnViewModel}">
+            <StackPanel Margin="0,0,0,20">
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                    <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE8F1;" FontSize="25"
+                               Foreground="#6951A1" Margin="0,0,13,0" />
+                    <TextBlock Text="MƯỢN / TRẢ SÁCH" FontSize="27" FontWeight="Bold"
+                               Foreground="#35294D" />
+                </StackPanel>
+                <TextBlock Text="Quản lý phiếu theo từng cuốn vật lý · Ngày giờ hiển thị theo UTC"
+                           FontSize="12" Foreground="#796A8E" Margin="0,0,0,13" />
+                <Border Background="#F0EBF8" BorderBrush="#D7CBEB" BorderThickness="1"
+                        CornerRadius="7" Padding="12" Margin="0,0,0,12">
+                    <DockPanel>
+                        <TextBlock DockPanel.Dock="Left" FontFamily="Segoe MDL2 Assets" Text="&#xE946;"
+                                   Foreground="#6951A1" FontSize="17" Margin="0,0,10,0" />
+                        <TextBlock Text="{Binding Message, Mode=OneWay}" TextWrapping="Wrap"
+                                   Foreground="#514074" />
+                    </DockPanel>
+                </Border>
+                <Button Command="{Binding RefreshCommand}" Height="38" Width="190"
+                        Background="#6951A1" Foreground="White" BorderThickness="0"
+                        HorizontalAlignment="Left" Margin="0,0,0,16">
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                        <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE72C;" Margin="0,0,8,0" />
+                        <TextBlock Text="TẢI LẠI PHIẾU MƯỢN" />
+                    </StackPanel>
+                </Button>
+
+                <!-- Staff/Admin-only checkout editor; Reader has no write controls. -->
+                <StackPanel Visibility="{Binding CanManage, Converter={StaticResource BoolVisibility}}">
+                    <Border Background="White" BorderBrush="#E6DFF1" BorderThickness="1"
+                            CornerRadius="9" Padding="17" Margin="0,0,0,15">
+                        <StackPanel>
+                            <TextBlock Text="Lập phiếu mượn theo cuốn" FontSize="18"
+                                       FontWeight="SemiBold" Foreground="#35294D" Margin="0,0,0,13" />
+                            <TextBlock Text="Username độc giả (Reader đang hoạt động)" FontWeight="SemiBold" />
+                            <TextBox Text="{Binding ReaderUsername, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                     Height="36" Padding="9,6" Margin="0,5,0,10" MaxLength="100" />
+                            <TextBlock Text="Tìm cuốn còn sẵn (theo tên sách hoặc mã cuốn)" FontWeight="SemiBold" />
+                            <DockPanel LastChildFill="True" Margin="0,5,0,10">
+                                <Button Command="{Binding SearchAvailableCommand}" DockPanel.Dock="Right"
+                                        Content="TÌM CUỐN CÒN SẴN" Width="160" Height="36"
+                                        Background="#E5DCF2" BorderThickness="0" Margin="9,0,0,0" />
+                                <TextBox Text="{Binding CopyQuery, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                         Height="36" Padding="9,6" MaxLength="80" />
+                            </DockPanel>
+                            <DataGrid ItemsSource="{Binding AvailableCopies, Mode=OneWay}"
+                                      SelectedItem="{Binding SelectedCopy, Mode=TwoWay}"
+                                      AutoGenerateColumns="False" IsReadOnly="True"
+                                      CanUserAddRows="False" CanUserDeleteRows="False" Height="188"
+                                      SelectionMode="Single" Background="White"
+                                      ScrollViewer.HorizontalScrollBarVisibility="Auto" Margin="0,0,0,13">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="Mã cuốn" Binding="{Binding CopyCode, Mode=OneWay}" Width="160" MinWidth="120" />
+                                    <DataGridTextColumn Header="Tên sách" Binding="{Binding BookTitle, Mode=OneWay}" Width="2*" MinWidth="220" />
+                                    <DataGridTextColumn Header="Vị trí kệ" Binding="{Binding Shelf, Mode=OneWay}" Width="*" MinWidth="125" />
+                                </DataGrid.Columns>
+                            </DataGrid>
+                            <TextBlock Text="Chọn cuốn trong bảng hoặc nhập mã cuốn bên dưới." Foreground="#796A8E"
+                                       FontSize="12" Margin="0,0,0,9" />
+                            <Grid Margin="0,0,0,12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="2*" />
+                                    <ColumnDefinition Width="13" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0">
+                                    <TextBlock Text="Mã cuốn" FontWeight="SemiBold" />
+                                    <TextBox Text="{Binding CopyCode, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                             Height="36" Padding="9,6" Margin="0,5,0,0" MaxLength="60" />
+                                </StackPanel>
+                                <StackPanel Grid.Column="2">
+                                    <TextBlock Text="Số ngày mượn" FontWeight="SemiBold" />
+                                    <TextBox Text="{Binding LoanDays, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                             Height="36" Padding="9,6" Margin="0,5,0,0" MaxLength="3" />
+                                </StackPanel>
+                            </Grid>
+                            <Button Command="{Binding CheckoutCommand}" Content="TẠO PHIẾU MƯỢN"
+                                    Background="#287C67" Foreground="White" BorderThickness="0"
+                                    Height="42" HorizontalAlignment="Left" Width="200" />
+                            <TextBlock Text="Giới hạn cuốn và ngày mượn lấy từ hạng độc giả; API kiểm tra lại trước khi lưu."
+                                       TextWrapping="Wrap" Foreground="#796A8E" FontSize="12"
+                                       Margin="0,12,0,0" />
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+
+                <Border Background="White" BorderBrush="#E6DFF1" BorderThickness="1"
+                        CornerRadius="9" Padding="17">
+                    <StackPanel>
+                        <TextBlock Text="Phiếu mượn / lịch sử trả" FontSize="18" FontWeight="SemiBold"
+                                   Foreground="#35294D" Margin="0,0,0,5" />
+                        <TextBlock Text="Reader chỉ thấy phiếu của mình. Staff/Admin xem tối đa 100 lượt gần nhất."
+                                   Foreground="#796A8E" FontSize="12" Margin="0,0,0,12" />
+                        <DataGrid ItemsSource="{Binding Loans, Mode=OneWay}"
+                                  SelectedItem="{Binding SelectedLoan, Mode=TwoWay}"
+                                  AutoGenerateColumns="False" IsReadOnly="True" Height="340"
+                                  CanUserAddRows="False" CanUserDeleteRows="False"
+                                  SelectionMode="Single" Background="White"
+                                  ScrollViewer.HorizontalScrollBarVisibility="Auto">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Độc giả" Binding="{Binding ReaderUsername, Mode=OneWay}" Width="115" MinWidth="105" />
+                                <DataGridTextColumn Header="Tên sách" Binding="{Binding BookTitle, Mode=OneWay}" Width="2*" MinWidth="220" />
+                                <DataGridTextColumn Header="Mã cuốn" Binding="{Binding CopyCode, Mode=OneWay}" Width="125" MinWidth="110" />
+                                <DataGridTextColumn Header="Mượn lúc" Binding="{Binding BorrowedAt, Mode=OneWay}" Width="158" MinWidth="145" />
+                                <DataGridTextColumn Header="Hạn trả" Binding="{Binding DueAt, Mode=OneWay}" Width="158" MinWidth="145" />
+                                <DataGridTextColumn Header="Đã trả lúc" Binding="{Binding ReturnedAt, Mode=OneWay}" Width="158" MinWidth="145" />
+                                <DataGridTextColumn Header="Trạng thái" Binding="{Binding Status, Mode=OneWay}" Width="95" MinWidth="90" />
+                            </DataGrid.Columns>
+                        </DataGrid>
+                        <StackPanel Visibility="{Binding CanManage, Converter={StaticResource BoolVisibility}}">
+                            <TextBlock Text="Chọn một phiếu chưa trả rồi nhấn nút dưới để ghi nhận trả."
+                                       Foreground="#796A8E" Margin="0,12,0,8" />
+                            <Button Command="{Binding ReturnCommand}" Height="40" Width="205"
+                                    Content="GHI NHẬN TRẢ CUỐN" HorizontalAlignment="Left"
+                                    Background="#6951A1" Foreground="White" BorderThickness="0" />
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </DataTemplate>
+
         <Style x:Key="SideButton" TargetType="Button">
             <Setter Property="Height" Value="45" />
             <Setter Property="Margin" Value="0,4,0,4" />
@@ -263,8 +387,8 @@
                                 <TextBlock Text="Hồ sơ của tôi" />
                             </StackPanel>
                         </Button>
-                        <Button Style="{StaticResource SideButton}" Content="Sách đang mượn"
-                                Command="{Binding PendingCommand}" CommandParameter="Sách đang mượn" />
+                        <Button Style="{StaticResource SideButton}" Content="Sách đang mượn / lịch sử"
+                                Command="{Binding LoansCommand}" />
                         <Button Style="{StaticResource SideButton}" Content="Gia hạn"
                                 Command="{Binding PendingCommand}" CommandParameter="Gia hạn" />
                         <Button Style="{StaticResource SideButton}" Content="Tiền phạt"
@@ -275,7 +399,7 @@
                         <Button Style="{StaticResource SideButton}" Content="Quản lý độc giả"
                                 Command="{Binding ReaderCommand}" />
                         <Button Style="{StaticResource SideButton}" Content="Mượn / trả sách"
-                                Command="{Binding PendingCommand}" CommandParameter="Mượn / trả sách" />
+                                Command="{Binding LoansCommand}" />
                     </StackPanel>
                     <StackPanel Visibility="{Binding IsAdmin, Converter={StaticResource BoolVisibility}}">
                         <TextBlock Text="QUẢN TRỊ" Foreground="#BAABD6" Margin="12,24,0,8" FontSize="11" />
