@@ -1,28 +1,33 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+using System;
 using System.Windows;
-using System.Windows.Controls;
-using System.Windows.Data;
-using System.Windows.Documents;
-using System.Windows.Input;
-using System.Windows.Media;
-using System.Windows.Media.Imaging;
-using System.Windows.Navigation;
-using System.Windows.Shapes;
+using QuanLyThuVien.ViewModels;
 
 namespace QuanLyThuVien.Views
 {
-    /// <summary>
-    /// Interaction logic for MainWindow.xaml
-    /// </summary>
-    public partial class MainWindow : UserControl
+    public partial class MainWindow : Window
     {
-        public MainWindow()
+        private readonly MainViewModel _viewModel;
+        public MainWindow(string token)
         {
             InitializeComponent();
+            _viewModel = new MainViewModel(token);
+            DataContext = _viewModel;
+            _viewModel.LogoutRequested += ViewModel_LogoutRequested;
+            Loaded += MainWindow_Loaded;
+            Closed += (s, e) => _viewModel.LogoutRequested -= ViewModel_LogoutRequested;
+        }
+        private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
+        {
+            Loaded -= MainWindow_Loaded;
+            await _viewModel.InitializeAsync();
+        }
+        private void ViewModel_LogoutRequested(object sender, EventArgs e)
+        {
+            if (!Dispatcher.CheckAccess()) { Dispatcher.BeginInvoke(new Action(() => ViewModel_LogoutRequested(sender, e))); return; }
+            var login = new LoginHostWindow();
+            Application.Current.MainWindow = login;
+            login.Show();
+            Close();
         }
     }
 }

@@ -17,6 +17,16 @@ builder.Services.AddSingleton<SessionService>();
 
 var app = builder.Build();
 
+// Explicit one-time CLI path. Never expose bootstrap as HTTP.
+if (args.Contains("--bootstrap-admin", StringComparer.Ordinal))
+{
+    if (!app.Environment.IsDevelopment())
+        throw new InvalidOperationException("Admin bootstrap only works in Development.");
+    await AdminProvisioning.RunBootstrapAsync(app.Configuration);
+    return;
+}
+
+
 // Giu nguyen endpoint kiem tra ket noi Aiven da chay duoc o buoc 28.
 app.MapGet("/api/health", async (
     IConfiguration configuration,
@@ -514,6 +524,199 @@ app.MapPost("/api/books/{bookId:long}/copies", async (
     }
 });
 
+
+// Metadata directory endpoints — role enforced server-side (development only).
+app.MapGet("/api/catalog/reference", async (HttpRequest req, SessionService sessions,
+    IConfiguration config, CancellationToken ct) =>
+{
+    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    var who = sessions.Validate(ReadBearerToken(req));
+    if (who is null) return Results.Unauthorized();
+    if (who.Role is not ("Reader" or "Staff" or "Admin")) return Results.StatusCode(403);
+    try
+    {
+        await using var db = new NpgsqlConnection(config.GetConnectionString("AivenPostgres"));
+        await db.OpenAsync(ct);
+        async Task<List<object>> ReadAsync(string sql)
+        {
+            var list = new List<object>();
+            await using var cmd = new NpgsqlCommand(sql, db);
+            await using var reader = await cmd.ExecuteReaderAsync(ct);
+            while (await reader.ReadAsync(ct))
+                list.Add(new
+                {
+                    id = reader.GetInt64(0),
+                    name = reader.GetString(1),
+                    detail = reader.IsDBNull(2) ? "" : reader.GetString(2)
+                });
+            return list;
+        }
+        var authors = await ReadAsync("SELECT author_id,name,biography FROM public.authors ORDER BY name LIMIT 500");
+        var publishers = await ReadAsync("SELECT publisher_id,name,contact_info FROM public.publishers ORDER BY name LIMIT 500");
+        var categories = await ReadAsync("SELECT category_id,name,CAST(parent_id AS TEXT) FROM public.categories ORDER BY name LIMIT 500");
+        return Results.Ok(new { authors, publishers, categories });
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogError("Catalog reference failed: {Type}", ex.GetType().Name);
+        return Results.Json(new { message = "Khong tai duoc danh muc." }, statusCode: 503);
+    }
+});
+
+app.MapPost("/api/catalog/reference/{kind}", async (string kind, ReferenceCreateRequest body,
+    HttpRequest req, SessionService sessions, IConfiguration config, CancellationToken ct) =>
+{
+    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    var who = sessions.Validate(ReadBearerToken(req));
+    if (who is null) return Results.Unauthorized();
+    if (who.Role is not ("Staff" or "Admin")) return Results.StatusCode(403);
+    string name = body.Name?.Trim() ?? "";
+    string detail = body.Detail?.Trim() ?? "";
+    int limit = kind == "categories" ? 160 : 220;
+    if (kind is not ("authors" or "publishers" or "categories")) return Results.NotFound();
+    if (name.Length < 2 || name.Length > limit || detail.Length > 4000)
+        return Results.BadRequest(new { message = "Ten 2-" + limit + " ky tu; mo ta toi da 4000." });
+    if (kind == "categories" && detail.Length > 0)
+        return Results.BadRequest(new { message = "Buoc nay chi tao the loai goc, de trong mo ta." });
+    try
+    {
+        await using var db = new NpgsqlConnection(config.GetConnectionString("AivenPostgres"));
+        await db.OpenAsync(ct);
+        // identifiers are fixed choices, never accepted directly from client.
+        string existsSql = kind switch
+        {
+            "authors" => "SELECT author_id FROM public.authors WHERE LOWER(name)=LOWER(@name) LIMIT 1",
+            "publishers" => "SELECT publisher_id FROM public.publishers WHERE LOWER(name)=LOWER(@name) LIMIT 1",
+            _ => "SELECT category_id FROM public.categories WHERE LOWER(name)=LOWER(@name) LIMIT 1"
+        };
+        await using (var check = new NpgsqlCommand(existsSql, db))
+        {
+            check.Parameters.AddWithValue("name", name);
+            if (await check.ExecuteScalarAsync(ct) is not null)
+                return Results.Conflict(new { message = "Ten nay da ton tai." });
+        }
+        string sql = kind switch
+        {
+            "authors" => "INSERT INTO public.authors(name,biography) VALUES(@name,@detail) RETURNING author_id",
+            "publishers" => "INSERT INTO public.publishers(name,contact_info) VALUES(@name,@detail) RETURNING publisher_id",
+            _ => "INSERT INTO public.categories(name,parent_id) VALUES(@name,NULL) RETURNING category_id"
+        };
+        await using var cmd = new NpgsqlCommand(sql, db);
+        cmd.Parameters.AddWithValue("name", name);
+        cmd.Parameters.AddWithValue("detail", string.IsNullOrEmpty(detail) ? DBNull.Value : (object)detail);
+        long id = Convert.ToInt64(await cmd.ExecuteScalarAsync(ct));
+        return Results.Ok(new { id, name, message = "created" });
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogError("Catalog reference create failed: {Type}", ex.GetType().Name);
+        return Results.Json(new { message = "Khong the luu danh muc." }, statusCode: 503);
+    }
+});
+
+
+// Admin-only staff management. Never accept a Role or role_id from the client.
+app.MapGet("/api/admin/staff", async (HttpRequest request, SessionService sessions,
+    IConfiguration config, CancellationToken ct) =>
+{
+    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    var actor = sessions.Validate(ReadBearerToken(request));
+    if (actor is null) return Results.Unauthorized();
+    if (actor.Role != "Admin") return Results.StatusCode(403);
+    try
+    {
+        await using var db = new NpgsqlConnection(config.GetConnectionString("AivenPostgres"));
+        await db.OpenAsync(ct);
+        await using var cmd = new NpgsqlCommand(@"
+            SELECT u.user_id,u.username,s.staff_code,s.full_name,u.account_status,r.role_name
+            FROM public.staff_profiles s JOIN public.users u ON s.user_id=u.user_id
+            JOIN public.roles r ON u.role_id=r.role_id
+            ORDER BY u.user_id LIMIT 200", db);
+        await using var rd = await cmd.ExecuteReaderAsync(ct);
+        var data = new List<object>();
+        while (await rd.ReadAsync(ct))
+            data.Add(new
+            {
+                userId = rd.GetInt64(0),
+                username = rd.GetString(1),
+                staffCode = rd.GetString(2),
+                fullName = rd.GetString(3),
+                status = rd.GetString(4),
+                role = rd.GetString(5)
+            });
+        return Results.Ok(new { staff = data });
+    }
+    catch (Exception e)
+    {
+        app.Logger.LogError("Staff list failed: {Type}", e.GetType().Name);
+        return Results.Json(new { message = "Khong the tai nhan vien." }, statusCode: 503);
+    }
+});
+
+app.MapPost("/api/admin/staff", async (NewStaffRequest body, HttpRequest request,
+    SessionService sessions, IConfiguration config, CancellationToken ct) =>
+{
+    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    var actor = sessions.Validate(ReadBearerToken(request));
+    if (actor is null) return Results.Unauthorized();
+    if (actor.Role != "Admin") return Results.StatusCode(403);
+    string username = body.Username?.Trim() ?? "";
+    string fullname = body.FullName?.Trim() ?? "";
+    string code = body.StaffCode?.Trim() ?? "";
+    string password = body.Password ?? "";
+    if (!System.Text.RegularExpressions.Regex.IsMatch(username, @"\A[a-zA-Z0-9._]{3,40}\z") ||
+        fullname.Length is < 2 or > 200 || code.Length is < 2 or > 40 ||
+        password.Length is < 5 or > 128)
+        return Results.BadRequest(new { message = "Tai khoan 3-40; ho ten 2-200; ma NV 2-40; mat khau 5-128 ky tu." });
+    try
+    {
+        await using var db = new NpgsqlConnection(config.GetConnectionString("AivenPostgres"));
+        await db.OpenAsync(ct);
+        await using var tx = await db.BeginTransactionAsync(ct);
+        await using (var lockCmd = new NpgsqlCommand("SELECT pg_advisory_xact_lock(91736125)", db, tx))
+            await lockCmd.ExecuteNonQueryAsync(ct);
+        await using (var check = new NpgsqlCommand("SELECT EXISTS(SELECT 1 FROM public.users WHERE LOWER(username)=LOWER(@u))", db, tx))
+        {
+            check.Parameters.AddWithValue("u", username);
+            if (Convert.ToBoolean(await check.ExecuteScalarAsync(ct)))
+                return Results.Conflict(new { message = "Username da ton tai." });
+        }
+        long roleId;
+        await using (var role = new NpgsqlCommand("SELECT role_id FROM public.roles WHERE LOWER(role_name)='staff' LIMIT 1", db, tx))
+            roleId = Convert.ToInt64(await role.ExecuteScalarAsync(ct) ?? throw new InvalidOperationException("Staff role missing"));
+        long userId;
+        await using (var insert = new NpgsqlCommand(@"
+            INSERT INTO public.users(username,password_hash,role_id,account_status)
+            VALUES(@u,@h,@r,'active') RETURNING user_id", db, tx))
+        {
+            insert.Parameters.AddWithValue("u", username);
+            insert.Parameters.AddWithValue("h", BCrypt.Net.BCrypt.EnhancedHashPassword(password, workFactor: 12));
+            insert.Parameters.AddWithValue("r", checked((int)roleId));
+            userId = Convert.ToInt64(await insert.ExecuteScalarAsync(ct));
+        }
+        await using (var insert = new NpgsqlCommand(@"
+            INSERT INTO public.staff_profiles(user_id,staff_code,full_name,hourly_rate)
+            VALUES(@id,@c,@f,0)", db, tx))
+        {
+            insert.Parameters.AddWithValue("id", userId);
+            insert.Parameters.AddWithValue("c", code);
+            insert.Parameters.AddWithValue("f", fullname);
+            await insert.ExecuteNonQueryAsync(ct);
+        }
+        await tx.CommitAsync(ct);
+        return Results.Ok(new { message = "staff_created", userId, username, role = "Staff" });
+    }
+    catch (PostgresException e) when (e.SqlState == PostgresErrorCodes.UniqueViolation)
+    {
+        return Results.Conflict(new { message = "Username hoac ma nhan vien da ton tai." });
+    }
+    catch (Exception e)
+    {
+        app.Logger.LogError("Create staff failed: {Type}", e.GetType().Name);
+        return Results.Json(new { message = "Khong the tao nhan vien." }, statusCode: 503);
+    }
+});
+
 app.Run();
 
 // Du lieu JSON nhan tu WPF hoac Postman/PowerShell.
@@ -526,3 +729,7 @@ public sealed record RegisterStartRequest(
 public sealed record RegisterConfirmRequest(Guid RequestId, string? Otp);
 
 public sealed record AddCopyRequest(string? CopyCode, string? ShelfLocation);
+
+public sealed record ReferenceCreateRequest(string? Name, string? Detail);
+
+public sealed record NewStaffRequest(string? Username, string? FullName, string? StaffCode, string? Password);

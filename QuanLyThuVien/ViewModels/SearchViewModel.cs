@@ -1,12 +1,8 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-
 namespace QuanLyThuVien.ViewModels
 {
-    internal class SearchViewModel
+    // Reuses BookManagementViewModel and the same book catalog UI; no copy/paste business logic.
+    public sealed class SearchViewModel : BookManagementViewModel
     {
+        public SearchViewModel(string token, string role) : base(token, role) { }
     }
 }

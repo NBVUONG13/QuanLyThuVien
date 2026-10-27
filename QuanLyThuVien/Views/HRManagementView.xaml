@@ -1,12 +1,35 @@
-﻿<Window x:Class="QuanLyThuVien.Views.HRManagementView"
-        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
-        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-        xmlns:local="clr-namespace:QuanLyThuVien.Views"
-        mc:Ignorable="d"
-        Title="HRManagementView" Height="450" Width="800">
-    <Grid>
-        
-    </Grid>
-</Window>
+<UserControl x:Class="QuanLyThuVien.Views.HRManagementView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <StackPanel>
+        <DockPanel Margin="0,0,0,14">
+            <Button Content="Làm mới" Command="{Binding RefreshCommand}" DockPanel.Dock="Right" Width="110" Height="35"/>
+            <TextBlock Text="Quản lý nhân viên (Admin)" FontSize="26" FontWeight="Bold"/>
+        </DockPanel>
+        <TextBlock Text="{Binding Status}" Foreground="#2563EB" Margin="0,0,0,12" TextWrapping="Wrap"/>
+        <DataGrid ItemsSource="{Binding Staff}" IsReadOnly="True" AutoGenerateColumns="False" Height="280" CanUserAddRows="False">
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="User ID" Binding="{Binding UserId}" Width="90"/>
+                <DataGridTextColumn Header="Username" Binding="{Binding Username}" Width="*"/>
+                <DataGridTextColumn Header="Họ tên" Binding="{Binding FullName}" Width="2*"/>
+                <DataGridTextColumn Header="Mã nhân viên" Binding="{Binding StaffCode}" Width="*"/>
+                <DataGridTextColumn Header="Quyền" Binding="{Binding Role}" Width="90"/>
+                <DataGridTextColumn Header="Trạng thái" Binding="{Binding Status}" Width="130"/>
+            </DataGrid.Columns>
+        </DataGrid>
+        <Border Padding="18" Background="White" CornerRadius="8" Margin="0,18,0,0">
+            <StackPanel>
+                <TextBlock Text="Tạo tài khoản Staff" FontWeight="Bold" FontSize="18" Margin="0,0,0,12"/>
+                <TextBlock Text="Username"/>
+                <TextBox Text="{Binding Username, UpdateSourceTrigger=PropertyChanged}" Height="34" Margin="0,3,0,8"/>
+                <TextBlock Text="Họ tên"/>
+                <TextBox Text="{Binding FullName, UpdateSourceTrigger=PropertyChanged}" Height="34" Margin="0,3,0,8"/>
+                <TextBlock Text="Mã nhân viên"/>
+                <TextBox Text="{Binding StaffCode, UpdateSourceTrigger=PropertyChanged}" Height="34" Margin="0,3,0,8"/>
+                <TextBlock Text="Mật khẩu Staff (theo quy tắc của API hiện tại)"/>
+                <PasswordBox x:Name="StaffPassword" Height="34" Margin="0,3,0,10"/>
+                <Button Content="TẠO STAFF" Width="170" Height="39" HorizontalAlignment="Left" Click="CreateStaff_Click" />
+            </StackPanel>
+        </Border>
+    </StackPanel>
+</UserControl>

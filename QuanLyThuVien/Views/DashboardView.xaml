@@ -1,12 +1,18 @@
-﻿<Window x:Class="QuanLyThuVien.Views.DashboardView"
-        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
-        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-        xmlns:local="clr-namespace:QuanLyThuVien.Views"
-        mc:Ignorable="d"
-        Title="DashboardView" Height="450" Width="800">
-    <Grid>
-        
-    </Grid>
-</Window>
+<UserControl x:Class="QuanLyThuVien.Views.DashboardView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <StackPanel>
+        <DockPanel Margin="0,0,0,16">
+            <Button Content="Làm mới" DockPanel.Dock="Right" Width="110" Height="34" Command="{Binding RefreshCommand}"/>
+            <TextBlock Text="Tổng quan thư viện" FontSize="28" FontWeight="Bold" Foreground="#172033"/>
+        </DockPanel>
+        <TextBlock Text="{Binding Status}" Foreground="#64748B" Margin="0,0,0,16"/>
+        <UniformGrid Columns="2">
+            <Border Background="White" Margin="0,0,14,14" Padding="22" CornerRadius="7"><StackPanel><TextBlock Text="Đầu sách"/><TextBlock Text="{Binding Books}" FontSize="32" FontWeight="Bold" Foreground="#2563EB"/></StackPanel></Border>
+            <Border Background="White" Margin="0,0,14,14" Padding="22" CornerRadius="7"><StackPanel><TextBlock Text="Tác giả"/><TextBlock Text="{Binding Authors}" FontSize="32" FontWeight="Bold" Foreground="#2563EB"/></StackPanel></Border>
+            <Border Background="White" Margin="0,0,14,14" Padding="22" CornerRadius="7"><StackPanel><TextBlock Text="Thể loại"/><TextBlock Text="{Binding Categories}" FontSize="32" FontWeight="Bold" Foreground="#2563EB"/></StackPanel></Border>
+            <Border Background="White" Margin="0,0,14,14" Padding="22" CornerRadius="7"><StackPanel><TextBlock Text="Bản sao vật lý"/><TextBlock Text="{Binding Copies}" FontSize="32" FontWeight="Bold" Foreground="#2563EB"/></StackPanel></Border>
+            <Border Background="White" Margin="0,0,14,14" Padding="22" CornerRadius="7"><StackPanel><TextBlock Text="Hồ sơ độc giả"/><TextBlock Text="{Binding Readers}" FontSize="32" FontWeight="Bold" Foreground="#2563EB"/></StackPanel></Border>
+        </UniformGrid>
+    </StackPanel>
+</UserControl>
