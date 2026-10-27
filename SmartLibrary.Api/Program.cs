@@ -881,6 +881,280 @@ app.MapGet("/api/readers", async (string? query, HttpRequest request, SessionSer
 });
 
 
+
+// STEP 57 - Staff/Admin reader insights and borrow ban history. Uses existing audit_logs,
+// no DDL, no new column. Ban is an event-sourced decision distinct from login status.
+app.MapGet("/api/readers/{readerId:long}/insights", async (long readerId,
+    HttpRequest request, SessionService sessions, IConfiguration config, CancellationToken ct) =>
+{
+    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    var actor = sessions.Validate(ReadBearerToken(request));
+    if (actor is null) return Results.Unauthorized();
+    if (actor.Role is not ("Staff" or "Admin")) return Results.StatusCode(403);
+    if (readerId <= 0) return Results.BadRequest(new { message = "ID doc gia khong hop le." });
+    string insightStage = "reader_profile";
+    try
+    {
+        var cs = config.GetConnectionString("AivenPostgres")
+            ?? throw new InvalidOperationException("Database connection missing.");
+        await using var db = new NpgsqlConnection(cs);
+        await db.OpenAsync(ct);
+        string? username = null, fullName = null, readerCode = null, tier = null, status = null, phone = null;
+        int maxCopies = 0, maxDays = 0;
+        await using (var cmd = new NpgsqlCommand(@"
+            SELECT u.username,rp.full_name,rp.reader_code,t.tier_name,u.account_status,
+                   COALESCE(rp.phone_e164,''),
+                   COALESCE(rp.override_max_active_copies,t.max_active_copies),
+                   COALESCE(rp.override_max_loan_days,t.max_loan_days)
+            FROM public.reader_profiles rp
+            JOIN public.users u ON u.user_id=rp.user_id
+            JOIN public.reader_tiers t ON t.tier_id=rp.tier_id
+            JOIN public.roles role ON role.role_id=u.role_id
+            WHERE rp.user_id=@id AND role.role_name='Reader';", db))
+        {
+            cmd.Parameters.AddWithValue("id", readerId);
+            await using var rd = await cmd.ExecuteReaderAsync(ct);
+            if (!await rd.ReadAsync(ct)) return Results.NotFound();
+            username = rd.GetString(0); fullName = rd.GetString(1); readerCode = rd.GetString(2);
+            tier = rd.GetString(3); status = rd.GetString(4); phone = rd.GetString(5);
+            maxCopies = rd.GetInt32(6); maxDays = rd.GetInt32(7);
+        }
+        insightStage = "loan_summary";
+        long totalLoans = 0, totalCopies = 0, returned = 0, open = 0, overdue = 0;
+        await using (var cmd = new NpgsqlCommand(@"
+            SELECT COUNT(DISTINCT b.borrow_id),COUNT(d.borrow_detail_id),
+                   COUNT(d.borrow_detail_id) FILTER(WHERE d.close_reason='returned'),
+                   COUNT(d.borrow_detail_id) FILTER(WHERE d.closed_at IS NULL),
+                   COUNT(d.borrow_detail_id) FILTER(WHERE
+                     (d.close_reason='returned' AND d.returned_at>d.due_at)
+                     OR (d.closed_at IS NULL AND d.due_at<NOW()))
+            FROM public.borrows b JOIN public.borrow_details d ON d.borrow_id=b.borrow_id
+            WHERE b.reader_user_id=@id;", db))
+        {
+            cmd.Parameters.AddWithValue("id", readerId);
+            await using var rd = await cmd.ExecuteReaderAsync(ct);
+            await rd.ReadAsync(ct);
+            totalLoans = rd.GetInt64(0); totalCopies = rd.GetInt64(1);
+            returned = rd.GetInt64(2); open = rd.GetInt64(3); overdue = rd.GetInt64(4);
+        }
+        insightStage = "fine_balances";
+        decimal fineTotal = 0, fineOwed = 0;
+        await using (var cmd = new NpgsqlCommand(@"
+            SELECT COALESCE(SUM(GREATEST(0,f.amount-f.waived_amount)),0),
+                   COALESCE(SUM(GREATEST(0,f.amount-f.waived_amount-COALESCE(pay.paid,0))),0)
+            FROM public.fines f
+            JOIN public.borrow_details d ON d.borrow_detail_id=f.borrow_detail_id
+            JOIN public.borrows b ON b.borrow_id=d.borrow_id
+            LEFT JOIN (SELECT fine_id,SUM(amount) paid FROM public.fine_payments GROUP BY fine_id)
+              pay ON pay.fine_id=f.fine_id
+            WHERE b.reader_user_id=@id;", db))
+        {
+            cmd.Parameters.AddWithValue("id", readerId);
+            await using var rd = await cmd.ExecuteReaderAsync(ct);
+            await rd.ReadAsync(ct);
+            fineTotal = rd.GetDecimal(0); fineOwed = rd.GetDecimal(1);
+        }
+        insightStage = "loan_history";
+        var history = new List<object>();
+        await using (var cmd = new NpgsqlCommand(@"
+            SELECT bk.title,bc.copy_code,b.borrowed_at,d.due_at,
+                   d.returned_at,d.closed_at,d.close_reason
+            FROM public.borrow_details d
+            JOIN public.borrows b ON b.borrow_id=d.borrow_id
+            JOIN public.book_copies bc ON bc.copy_id=d.book_copy_id
+            JOIN public.books bk ON bk.book_id=bc.book_id
+            WHERE b.reader_user_id=@id
+            ORDER BY b.borrowed_at DESC,d.borrow_detail_id DESC LIMIT 100;", db))
+        {
+            cmd.Parameters.AddWithValue("id", readerId);
+            await using var rd = await cmd.ExecuteReaderAsync(ct);
+            while (await rd.ReadAsync(ct))
+            {
+                DateTime borrow = rd.GetDateTime(2), due = rd.GetDateTime(3);
+                DateTime? ret = rd.IsDBNull(4) ? null : rd.GetDateTime(4);
+                bool closed = !rd.IsDBNull(5);
+                bool late = (ret.HasValue && ret.Value > due) || (!closed && due < DateTime.UtcNow);
+                history.Add(new
+                {
+                    title = rd.GetString(0),
+                    copyCode = rd.GetString(1),
+                    borrowedAt = borrow.ToUniversalTime().ToString("dd/MM/yyyy HH:mm", CultureInfo.InvariantCulture),
+                    dueAt = due.ToUniversalTime().ToString("dd/MM/yyyy HH:mm", CultureInfo.InvariantCulture),
+                    returnedAt = ret.HasValue ? ret.Value.ToUniversalTime().ToString("dd/MM/yyyy HH:mm", CultureInfo.InvariantCulture) : "",
+                    status = rd.IsDBNull(6) ? (closed ? "Đã đóng" : late ? "Đang quá hạn" : "Đang mượn") : rd.GetString(6),
+                    isOverdue = late
+                });
+            }
+        }
+        insightStage = "borrow_access_history";
+        var decisions = new List<object>(); bool blocked = false; bool first = true;
+        await using (var cmd = new NpgsqlCommand(@"
+            SELECT a.action,COALESCE(a.details->>'reason',''),
+                   a.created_at,COALESCE(u.username,'system')
+            FROM public.audit_logs a
+            LEFT JOIN public.users u ON u.user_id=a.actor_user_id
+            WHERE a.entity_type='reader_borrow_access' AND a.entity_id=@entity
+              AND a.action IN ('reader_borrow_block','reader_borrow_unblock')
+            ORDER BY a.audit_id DESC LIMIT 40;", db))
+        {
+            cmd.Parameters.AddWithValue("entity", readerId.ToString(CultureInfo.InvariantCulture));
+            await using var rd = await cmd.ExecuteReaderAsync(ct);
+            while (await rd.ReadAsync(ct))
+            {
+                bool isBlock = rd.GetString(0) == "reader_borrow_block";
+                if (first) { blocked = isBlock; first = false; }
+                decisions.Add(new
+                {
+                    action = isBlock ? "Cấm mượn" : "Mở cấm",
+                    reason = rd.GetString(1),
+                    at = rd.GetDateTime(2).ToUniversalTime().ToString("dd/MM/yyyy HH:mm 'UTC'", CultureInfo.InvariantCulture),
+                    by = rd.GetString(3)
+                });
+            }
+        }
+        // Last six UTC months; count copies borrowed, including zero months.
+        insightStage = "monthly_chart";
+        var monthCounts = new Dictionary<string, long>();
+        await using (var cmd = new NpgsqlCommand(@"
+            SELECT to_char(date_trunc('month',b.borrowed_at AT TIME ZONE 'UTC'),'YYYY-MM') AS month_key,
+                   COUNT(*)
+            FROM public.borrows b JOIN public.borrow_details d ON d.borrow_id=b.borrow_id
+            WHERE b.reader_user_id=@id AND b.borrowed_at>=@since
+            GROUP BY 1 ORDER BY 1;", db))
+        {
+            var monthStart = new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1, 0, 0, 0, DateTimeKind.Utc).AddMonths(-5);
+            cmd.Parameters.AddWithValue("id", readerId);
+            cmd.Parameters.AddWithValue("since", NpgsqlDbType.TimestampTz, monthStart);
+            await using var rd = await cmd.ExecuteReaderAsync(ct);
+            while (await rd.ReadAsync(ct)) monthCounts[rd.GetString(0)] = rd.GetInt64(1);
+        }
+        var chart = new List<object>();
+        var start = new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1).AddMonths(-5);
+        for (int i = 0; i < 6; i++)
+        {
+            var m = start.AddMonths(i); string key = m.ToString("yyyy-MM", CultureInfo.InvariantCulture);
+            chart.Add(new
+            {
+                month = m.ToString("MM/yyyy", CultureInfo.InvariantCulture),
+                count = monthCounts.TryGetValue(key, out long n) ? n : 0L
+            });
+        }
+        return Results.Ok(new
+        {
+            reader = new
+            {
+                userId = readerId,
+                username,
+                fullName,
+                readerCode,
+                tierName = tier,
+                accountStatus = status,
+                phone,
+                maxActiveCopies = maxCopies,
+                maxLoanDays = maxDays,
+                borrowBlocked = blocked
+            },
+            statistics = new
+            {
+                totalLoans,
+                totalCopies,
+                returnedCopies = returned,
+                activeCopies = open,
+                overdueCount = overdue,
+                totalFine = fineTotal,
+                outstandingFine = fineOwed
+            },
+            loans = history,
+            restrictions = decisions,
+            monthlyBorrowCounts = chart
+        });
+    }
+    catch (OperationCanceledException) when (ct.IsCancellationRequested) { return Results.StatusCode(499); }
+    catch (PostgresException ex)
+    {
+        // Server log contains actual SQLSTATE and Postgres message. Do NOT log secrets or SQL parameters.
+        app.Logger.LogError(ex,
+            "Reader insight PostgreSQL error at {Stage}. SQLSTATE={SqlState}; PG Message={PgMessage}",
+            insightStage, ex.SqlState, ex.MessageText);
+        // The API is loopback/Development only; expose safe error location to assist diagnosis.
+        return Results.Json(new
+        {
+            message = "Không tải được chi tiết tại mục " + insightStage +
+                      " (PostgreSQL " + ex.SqlState + "). Kiểm tra terminal API.",
+            stage = insightStage,
+            sqlState = ex.SqlState
+        }, statusCode: 503);
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogError(ex, "Reader insight error at {Stage}", insightStage);
+        return Results.Json(new { message = "Không tải được chi tiết độc giả tại mục " + insightStage + "." }, statusCode: 503);
+    }
+});
+
+// Ban/unban is serialized with checkout on the same reader_profiles row lock.
+// The authoritative state is the LATEST audit event, not any WPF field.
+app.MapPost("/api/readers/{readerId:long}/borrow-access", async (
+    long readerId, ReaderBorrowAccessRequest body, HttpRequest request,
+    SessionService sessions, IConfiguration config, CancellationToken ct) =>
+{
+    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    var actor = sessions.Validate(ReadBearerToken(request));
+    if (actor is null) return Results.Unauthorized();
+    if (actor.Role is not ("Staff" or "Admin")) return Results.StatusCode(403);
+    string reason = (body.Reason ?? "").Trim();
+    if (readerId <= 0 || reason.Length < 8 || reason.Length > 500)
+        return Results.BadRequest(new { message = "Nhap ly do tu 8 den 500 ky tu." });
+    try
+    {
+        var cs = config.GetConnectionString("AivenPostgres")
+            ?? throw new InvalidOperationException("Database connection missing.");
+        await using var db = new NpgsqlConnection(cs);
+        await db.OpenAsync(ct);
+        await using var tx = await db.BeginTransactionAsync(ct);
+        await using (var lockCmd = new NpgsqlCommand(@"
+            SELECT 1 FROM public.reader_profiles rp
+            JOIN public.users u ON u.user_id=rp.user_id
+            WHERE rp.user_id=@id AND u.account_status='active'
+            FOR UPDATE OF rp;", db, tx))
+        {
+            lockCmd.Parameters.AddWithValue("id", readerId);
+            if (await lockCmd.ExecuteScalarAsync(ct) is null)
+                return Results.BadRequest(new { message = "Khong tim thay Reader active." });
+        }
+        bool currentBlock = false;
+        await using (var check = new NpgsqlCommand(@"
+            SELECT action FROM public.audit_logs
+            WHERE entity_type='reader_borrow_access' AND entity_id=@entity
+              AND action IN ('reader_borrow_block','reader_borrow_unblock')
+            ORDER BY audit_id DESC LIMIT 1;", db, tx))
+        {
+            check.Parameters.AddWithValue("entity", readerId.ToString(CultureInfo.InvariantCulture));
+            currentBlock = (await check.ExecuteScalarAsync(ct)) as string == "reader_borrow_block";
+        }
+        if (currentBlock == body.Block)
+            return Results.Conflict(new { message = currentBlock ? "Doc gia dang bi cam muon." : "Doc gia hien khong bi cam muon." });
+        await using (var save = new NpgsqlCommand(@"
+            INSERT INTO public.audit_logs(actor_user_id,action,entity_type,entity_id,details)
+            VALUES(@actor,@action,'reader_borrow_access',@entity,jsonb_build_object('reason',@reason));", db, tx))
+        {
+            save.Parameters.AddWithValue("actor", actor.UserId);
+            save.Parameters.AddWithValue("action", body.Block ? "reader_borrow_block" : "reader_borrow_unblock");
+            save.Parameters.AddWithValue("entity", readerId.ToString(CultureInfo.InvariantCulture));
+            save.Parameters.AddWithValue("reason", reason);
+            await save.ExecuteNonQueryAsync(ct);
+        }
+        await tx.CommitAsync(ct);
+        return Results.Ok(new { message = body.Block ? "Da cam Reader muon sach moi." : "Da mo cam Reader muon sach." });
+    }
+    catch (OperationCanceledException) when (ct.IsCancellationRequested) { return Results.StatusCode(499); }
+    catch (Exception ex)
+    {
+        app.Logger.LogError("Reader borrow access error {Type}", ex.GetType().Name);
+        return Results.Json(new { message = "Khong cap nhat duoc quyen muon." }, statusCode: 503);
+    }
+});
+
 // STEP 53 — Reader self-service edits. OTP only printed in API terminal in Development.
 // Never accept a target userId or permission role from the WPF client.
 app.MapPost("/api/readers/me/edit/start", async (
@@ -1088,6 +1362,141 @@ app.MapGet("/api/loans", async (HttpRequest request, SessionService sessions,
     }
 });
 
+// STEP 55 — DEV-only autocomplete: staff/admin can find Reader without accents/case.
+// Sensitive fields (phone, ID, password) are intentionally not returned.
+app.MapGet("/api/loans/reader-suggestions", async (string? query, HttpRequest request,
+    SessionService sessions, IConfiguration configuration, CancellationToken ct) =>
+{
+    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    var actor = sessions.Validate(ReadBearerToken(request));
+    if (actor is null) return Results.Unauthorized();
+    if (actor.Role is not ("Staff" or "Admin")) return Results.StatusCode(403);
+    string keyword = (query ?? "").Trim();
+    if (keyword.Length > 80) return Results.BadRequest(new { message = "Tu khoa toi da 80 ky tu." });
+    if (keyword.Length == 0) return Results.Ok(new { readers = Array.Empty<object>() });
+    try
+    {
+        var cs = configuration.GetConnectionString("AivenPostgres")
+            ?? throw new InvalidOperationException("Database is not configured.");
+        await using var db = new NpgsqlConnection(cs);
+        await db.OpenAsync(ct);
+        const string sql = @"
+            SELECT u.username, rp.full_name, rp.reader_code
+            FROM public.reader_profiles rp
+            JOIN public.users u ON u.user_id=rp.user_id
+            JOIN public.roles r ON r.role_id=u.role_id
+            JOIN public.reader_tiers t ON t.tier_id=rp.tier_id
+            WHERE u.account_status='active' AND r.role_name='Reader' AND t.is_active=TRUE
+            ORDER BY rp.full_name, u.username;";
+        await using var cmd = new NpgsqlCommand(sql, db);
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        var rows = new List<object>();
+        string needle = VietnameseSearch.Fold(keyword);
+        while (await reader.ReadAsync(ct))
+        {
+            string username = reader.GetString(0), fullName = reader.GetString(1), code = reader.GetString(2);
+            if (!VietnameseSearch.Matches(username, needle) &&
+                !VietnameseSearch.Matches(fullName, needle) &&
+                !VietnameseSearch.Matches(code, needle)) continue;
+            rows.Add(new { username, fullName, readerCode = code });
+            if (rows.Count >= 30) break;
+        }
+        return Results.Ok(new { readers = rows });
+    }
+    catch (OperationCanceledException) when (ct.IsCancellationRequested)
+    { return Results.StatusCode(499); }
+    catch (Exception ex)
+    {
+        app.Logger.LogError("Reader suggestion search failed: {Type}", ex.GetType().Name);
+        return Results.Json(new { message = "Khong the tim doc gia." }, statusCode: 503);
+    }
+});
+
+
+// STEP 56 — Autocomplete ALL catalogue titles, even when no lendable physical copy exists.
+// Demo/localhost endpoint, Staff/Admin only. Actual checkout still requires an available copy.
+app.MapGet("/api/loans/book-suggestions", async (string? query, HttpRequest request,
+    SessionService sessions, IConfiguration configuration, CancellationToken ct) =>
+{
+    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    var actor = sessions.Validate(ReadBearerToken(request));
+    if (actor is null) return Results.Unauthorized();
+    if (actor.Role is not ("Staff" or "Admin")) return Results.StatusCode(403);
+    string keyword = (query ?? "").Trim();
+    if (keyword.Length > 80) return Results.BadRequest(new { message = "Tu khoa toi da 80 ky tu." });
+    if (keyword.Length == 0) return Results.Ok(new { books = Array.Empty<object>() });
+    try
+    {
+        var cs = configuration.GetConnectionString("AivenPostgres")
+                 ?? throw new InvalidOperationException("Database is not configured.");
+        await using var db = new NpgsqlConnection(cs);
+        await db.OpenAsync(ct);
+        // The catalogue is intentionally searched independently from physical copies.
+        // For a larger library, move accent folding to indexed PostgreSQL search.
+        const string sql = @"
+            SELECT b.book_id, b.title, COALESCE(b.isbn,''),
+                   COALESCE((SELECT string_agg(a.name, ', ' ORDER BY a.name)
+                         FROM public.book_authors ba
+                         JOIN public.authors a ON a.author_id=ba.author_id
+                         WHERE ba.book_id=b.book_id), ''),
+                   COALESCE((SELECT string_agg(c.name, ', ' ORDER BY c.name)
+                         FROM public.book_categories bc
+                         JOIN public.categories c ON c.category_id=bc.category_id
+                         WHERE bc.book_id=b.book_id), ''),
+                   COALESCE(p.name,''),
+                   (SELECT COUNT(*) FROM public.book_copies bc
+                       WHERE bc.book_id=b.book_id AND bc.condition_status='active'
+                         AND NOT EXISTS (SELECT 1 FROM public.borrow_details d
+                                         WHERE d.book_copy_id=bc.copy_id AND d.closed_at IS NULL)),
+                   COALESCE((SELECT bc.copy_code FROM public.book_copies bc
+                       WHERE bc.book_id=b.book_id AND bc.condition_status='active'
+                         AND NOT EXISTS (SELECT 1 FROM public.borrow_details d
+                                         WHERE d.book_copy_id=bc.copy_id AND d.closed_at IS NULL)
+                       ORDER BY bc.copy_code LIMIT 1), '')
+            FROM public.books b
+            LEFT JOIN public.publishers p ON p.publisher_id=b.publisher_id
+            WHERE b.is_visible=TRUE
+            ORDER BY b.title, b.book_id;";
+        await using var cmd = new NpgsqlCommand(sql, db);
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        string needle = VietnameseSearch.Fold(keyword);
+        var books = new List<object>();
+        while (await reader.ReadAsync(ct))
+        {
+            string title = reader.GetString(1), isbn = reader.GetString(2);
+            string authors = reader.GetString(3), categories = reader.GetString(4);
+            string publisher = reader.GetString(5);
+            if (!VietnameseSearch.Matches(title, needle) &&
+                !VietnameseSearch.Matches(isbn, needle) &&
+                !VietnameseSearch.Matches(authors, needle) &&
+                !VietnameseSearch.Matches(categories, needle) &&
+                !VietnameseSearch.Matches(publisher, needle)) continue;
+            books.Add(new
+            {
+                bookId = reader.GetInt64(0),
+                title,
+                isbn,
+                authors,
+                categories,
+                publisher,
+                availableCopies = reader.GetInt64(6),
+                firstAvailableCopyCode = reader.GetString(7)
+            });
+            if (books.Count >= 30) break;
+        }
+        return Results.Ok(new { books });
+    }
+    catch (OperationCanceledException) when (ct.IsCancellationRequested)
+    { return Results.StatusCode(499); }
+    catch (Exception ex)
+    {
+        app.Logger.LogError("Book suggestion search failed: {Type}", ex.GetType().Name);
+        return Results.Json(new { message = "Khong the tai goi y sach." }, statusCode: 503);
+    }
+});
+
+// The copy list below also supports Unicode accent/case-insensitive partial matches.
+// This is a bounded RESULT scan in .NET and needs indexed DB search at large scale.
 app.MapGet("/api/loans/available-copies", async (string? query, HttpRequest request,
     SessionService sessions, IConfiguration configuration, CancellationToken ct) =>
 {
@@ -1110,20 +1519,25 @@ app.MapGet("/api/loans/available-copies", async (string? query, HttpRequest requ
             WHERE bc.condition_status='active' AND b.is_visible=TRUE
               AND NOT EXISTS(SELECT 1 FROM public.borrow_details d
                              WHERE d.book_copy_id=bc.copy_id AND d.closed_at IS NULL)
-              AND (@q='' OR bc.copy_code ILIKE @pattern OR b.title ILIKE @pattern)
-            ORDER BY b.title, bc.copy_code LIMIT 100;";
+            ORDER BY b.title, bc.copy_code;";
         await using var cmd = new NpgsqlCommand(sql, db);
-        cmd.Parameters.AddWithValue("q", keyword);
-        cmd.Parameters.AddWithValue("pattern", "%" + keyword + "%");
         await using var reader = await cmd.ExecuteReaderAsync(ct);
         var rows = new List<object>();
-        while (await reader.ReadAsync(ct)) rows.Add(new
+        string needle = VietnameseSearch.Fold(keyword);
+        while (await reader.ReadAsync(ct))
         {
-            copyId = reader.GetInt64(0),
-            copyCode = reader.GetString(1),
-            bookTitle = reader.GetString(2),
-            shelf = reader.GetString(3)
-        });
+            string copyCode = reader.GetString(1), title = reader.GetString(2);
+            if (needle.Length > 0 && !VietnameseSearch.Matches(copyCode, needle) &&
+                !VietnameseSearch.Matches(title, needle)) continue;
+            rows.Add(new
+            {
+                copyId = reader.GetInt64(0),
+                copyCode,
+                bookTitle = title,
+                shelf = reader.GetString(3)
+            });
+            if (rows.Count >= 100) break;
+        }
         return Results.Ok(new { copies = rows });
     }
     catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -1178,6 +1592,18 @@ app.MapPost("/api/loans/checkout", async (CheckoutLoanRequest input,
                 return Results.BadRequest(new { message = "Khong tim thay Reader dang hoat dong." });
             readerId = reader.GetInt64(0); tierId = reader.GetInt64(1);
             maxCopies = reader.GetInt32(2); maxDays = reader.GetInt32(3);
+        }
+        // Deny new checkout if the latest staff decision banned this Reader.
+        // The profile row was locked above; ban/unban uses the same lock.
+        await using (var access = new NpgsqlCommand(@"
+            SELECT action FROM public.audit_logs
+            WHERE entity_type='reader_borrow_access' AND entity_id=@entity
+              AND action IN ('reader_borrow_block','reader_borrow_unblock')
+            ORDER BY audit_id DESC LIMIT 1;", db, tx))
+        {
+            access.Parameters.AddWithValue("entity", readerId.ToString(CultureInfo.InvariantCulture));
+            if ((await access.ExecuteScalarAsync(ct)) as string == "reader_borrow_block")
+                return Results.StatusCode(StatusCodes.Status403Forbidden);
         }
         if (input.LoanDays > maxDays)
             return Results.BadRequest(new { message = $"Hang doc gia chi duoc muon toi da {maxDays} ngay." });
@@ -1300,6 +1726,268 @@ app.MapPost("/api/loans/{borrowDetailId:long}/return", async (long borrowDetailI
     }
 });
 
+
+// STEP 58 — Reader creates a multi-title REQUEST; this does not reserve copies or create borrows.
+// All new routes stay Development-only, matching the existing localhost prototype.
+app.MapGet("/api/borrow-requests/books", async (string? query, HttpRequest request,
+    SessionService sessions, IConfiguration config, CancellationToken ct) =>
+{
+    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    var actor = sessions.Validate(ReadBearerToken(request));
+    if (actor is null) return Results.Unauthorized();
+    if (actor.Role is not ("Reader" or "Staff" or "Admin")) return Results.StatusCode(403);
+    string term = (query ?? "").Trim();
+    if (term.Length > 80) return Results.BadRequest(new { message = "Tu khoa toi da 80 ky tu." });
+    try
+    {
+        var cs = config.GetConnectionString("AivenPostgres")
+            ?? throw new InvalidOperationException("Database config missing.");
+        await using var db = new NpgsqlConnection(cs);
+        await db.OpenAsync(ct);
+        await using var cmd = new NpgsqlCommand(@"
+            SELECT b.book_id, b.title, COALESCE(b.isbn,''),
+                   COALESCE((SELECT string_agg(a.name, ', ' ORDER BY a.name)
+                      FROM public.book_authors ba
+                      JOIN public.authors a ON a.author_id=ba.author_id
+                      WHERE ba.book_id=b.book_id),''),
+                   (SELECT COUNT(*) FROM public.book_copies bc
+                    WHERE bc.book_id=b.book_id AND bc.condition_status='active'
+                      AND NOT EXISTS(SELECT 1 FROM public.borrow_details d
+                                     WHERE d.book_copy_id=bc.copy_id AND d.closed_at IS NULL))
+            FROM public.books b WHERE b.is_visible=TRUE ORDER BY b.title LIMIT 2000;", db);
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        var found = new List<object>();
+        string folded = VietnameseSearch.Fold(term);
+        while (await reader.ReadAsync(ct))
+        {
+            var title = reader.GetString(1); var isbn = reader.GetString(2);
+            var authors = reader.GetString(3);
+            if (folded.Length > 0 &&
+                !VietnameseSearch.Matches(title, folded) &&
+                !VietnameseSearch.Matches(isbn, folded) &&
+                !VietnameseSearch.Matches(authors, folded)) continue;
+            found.Add(new
+            {
+                bookId = reader.GetInt64(0),
+                title,
+                isbn,
+                authors,
+                availableCopies = reader.GetInt64(4)
+            });
+            if (found.Count >= 25) break;
+        }
+        return Results.Ok(new { books = found });
+    }
+    catch (OperationCanceledException) when (ct.IsCancellationRequested) { return Results.StatusCode(499); }
+    catch (Exception ex)
+    {
+        app.Logger.LogError("Request book search failed: {Type}", ex.GetType().Name);
+        return Results.Json(new { message = "Khong tim duoc dau sach." }, statusCode: 503);
+    }
+});
+
+app.MapGet("/api/borrow-requests", async (HttpRequest request, SessionService sessions,
+    IConfiguration config, CancellationToken ct) =>
+{
+    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    var actor = sessions.Validate(ReadBearerToken(request));
+    if (actor is null) return Results.Unauthorized();
+    if (actor.Role is not ("Reader" or "Staff" or "Admin")) return Results.StatusCode(403);
+    try
+    {
+        var cs = config.GetConnectionString("AivenPostgres")
+            ?? throw new InvalidOperationException("Database config missing.");
+        await using var db = new NpgsqlConnection(cs);
+        await db.OpenAsync(ct);
+        await using var cmd = new NpgsqlCommand(@"
+            SELECT br.request_id,br.request_code,u.username,br.status,br.requested_at,
+                   COALESCE(br.note,''),COUNT(i.request_item_id),
+                   COALESCE(string_agg(b.title || ' (' || i.requested_days || ' ngay)',
+                                      '; ' ORDER BY i.request_item_id),'')
+            FROM public.borrow_requests br
+            JOIN public.users u ON u.user_id=br.reader_user_id
+            LEFT JOIN public.borrow_request_items i ON i.request_id=br.request_id
+            LEFT JOIN public.books b ON b.book_id=i.book_id
+            WHERE (@reader_only=FALSE OR br.reader_user_id=@reader_id)
+            GROUP BY br.request_id,u.username
+            ORDER BY br.requested_at DESC,br.request_id DESC LIMIT 100;", db);
+        cmd.Parameters.AddWithValue("reader_only", actor.Role == "Reader");
+        cmd.Parameters.AddWithValue("reader_id", actor.UserId);
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        var result = new List<object>();
+        while (await reader.ReadAsync(ct)) result.Add(new
+        {
+            requestId = reader.GetInt64(0),
+            requestCode = reader.GetString(1),
+            readerUsername = reader.GetString(2),
+            status = reader.GetString(3),
+            requestedAt = reader.GetDateTime(4).ToUniversalTime().ToString("yyyy-MM-dd HH:mm 'UTC'", CultureInfo.InvariantCulture),
+            note = reader.GetString(5),
+            itemCount = reader.GetInt64(6),
+            itemsSummary = reader.GetString(7)
+        });
+        return Results.Ok(new { requests = result });
+    }
+    catch (OperationCanceledException) when (ct.IsCancellationRequested) { return Results.StatusCode(499); }
+    catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UndefinedTable)
+    { return Results.Json(new { message = "Chua chay SQL migration buoc 58." }, statusCode: 503); }
+    catch (Exception ex)
+    {
+        app.Logger.LogError("Request list failed: {Type}", ex.GetType().Name);
+        return Results.Json(new { message = "Khong tai duoc don muon." }, statusCode: 503);
+    }
+});
+
+app.MapPost("/api/borrow-requests", async (NewBorrowRequest input, HttpRequest request,
+    SessionService sessions, IConfiguration config, CancellationToken ct) =>
+{
+    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    var actor = sessions.Validate(ReadBearerToken(request));
+    if (actor is null) return Results.Unauthorized();
+    if (actor.Role != "Reader") return Results.StatusCode(403);
+    if (input.Items is null || input.Items.Count is < 1 or > 5 ||
+       input.Items.Any(x => x.BookId <= 0 || x.RequestedDays is < 1 or > 90) ||
+       input.Items.Select(x => x.BookId).Distinct().Count() != input.Items.Count ||
+       (input.Note?.Length ?? 0) > 500)
+        return Results.BadRequest(new { message = "Mot don co 1-5 dau sach khac nhau, so ngay 1-90, ghi chu toi da 500 ky tu." });
+    try
+    {
+        var cs = config.GetConnectionString("AivenPostgres")
+            ?? throw new InvalidOperationException("Database config missing.");
+        await using var db = new NpgsqlConnection(cs);
+        await db.OpenAsync(ct);
+        await using var tx = await db.BeginTransactionAsync(ct);
+        int limit, daysLimit;
+        // Same lock as ban/unban and checkout, so the check is server-authoritative.
+        await using (var cmd = new NpgsqlCommand(@"
+            SELECT COALESCE(rp.override_max_active_copies,t.max_active_copies),
+                   COALESCE(rp.override_max_loan_days,t.max_loan_days)
+            FROM public.reader_profiles rp
+            JOIN public.reader_tiers t ON t.tier_id=rp.tier_id
+            JOIN public.users u ON u.user_id=rp.user_id
+            JOIN public.roles r ON r.role_id=u.role_id
+            WHERE rp.user_id=@id AND u.account_status='active'
+              AND r.role_name='Reader' AND t.is_active=TRUE
+            FOR UPDATE OF rp;", db, tx))
+        {
+            cmd.Parameters.AddWithValue("id", actor.UserId);
+            await using var reader = await cmd.ExecuteReaderAsync(ct);
+            if (!await reader.ReadAsync(ct)) return Results.StatusCode(403);
+            limit = reader.GetInt32(0); daysLimit = reader.GetInt32(1);
+        }
+        await using (var cmd = new NpgsqlCommand(@"
+            SELECT action FROM public.audit_logs
+            WHERE entity_type='reader_borrow_access' AND entity_id=@id
+            AND action IN ('reader_borrow_block','reader_borrow_unblock')
+            ORDER BY audit_id DESC LIMIT 1;", db, tx))
+        {
+            cmd.Parameters.AddWithValue("id", actor.UserId.ToString(CultureInfo.InvariantCulture));
+            if ((await cmd.ExecuteScalarAsync(ct)) as string == "reader_borrow_block")
+                return Results.StatusCode(403);
+        }
+        if (input.Items.Any(x => x.RequestedDays > daysLimit))
+            return Results.BadRequest(new { message = $"Hang doc gia cho phep toi da {daysLimit} ngay." });
+        await using (var cmd = new NpgsqlCommand(@"
+            SELECT (SELECT COUNT(*) FROM public.borrow_details d
+                    JOIN public.borrows b ON b.borrow_id=d.borrow_id
+                    WHERE b.reader_user_id=@id AND d.closed_at IS NULL)
+                 + (SELECT COUNT(*) FROM public.borrow_request_items i
+                    JOIN public.borrow_requests br ON br.request_id=i.request_id
+                    WHERE br.reader_user_id=@id AND br.status='pending'
+                      AND i.status='pending');", db, tx))
+        {
+            cmd.Parameters.AddWithValue("id", actor.UserId);
+            var outstanding = Convert.ToInt64(await cmd.ExecuteScalarAsync(ct));
+            if (outstanding + input.Items.Count > limit)
+                return Results.Conflict(new { message = $"Dang muon/cho duyet {outstanding} cuon; gioi han cua ban la {limit}." });
+        }
+        // Reject hidden/deleted titles. A pending request is allowed even at zero physical copies;
+        // staff can reject it later. No physical copy is reserved by this endpoint.
+        await using (var cmd = new NpgsqlCommand(@"
+            SELECT COUNT(*) FROM public.books WHERE book_id=ANY(@ids) AND is_visible=TRUE;", db, tx))
+        {
+            cmd.Parameters.Add("ids", NpgsqlDbType.Array | NpgsqlDbType.Bigint)
+                .Value = input.Items.Select(x => x.BookId).ToArray();
+            if (Convert.ToInt64(await cmd.ExecuteScalarAsync(ct)) != input.Items.Count)
+                return Results.BadRequest(new { message = "Mot so dau sach khong ton tai hoac da an." });
+        }
+        long requestId;
+        string code = "BR-" + DateTime.UtcNow.ToString("yyyyMMdd", CultureInfo.InvariantCulture)
+            + "-" + Guid.NewGuid().ToString("N")[..12].ToUpperInvariant();
+        await using (var cmd = new NpgsqlCommand(@"
+            INSERT INTO public.borrow_requests(request_code,reader_user_id,status,note)
+            VALUES(@code,@id,'pending',@note) RETURNING request_id;", db, tx))
+        {
+            cmd.Parameters.AddWithValue("code", code);
+            cmd.Parameters.AddWithValue("id", actor.UserId);
+            cmd.Parameters.AddWithValue("note", (object?)input.Note?.Trim() ?? DBNull.Value);
+            requestId = Convert.ToInt64(await cmd.ExecuteScalarAsync(ct));
+        }
+        foreach (var item in input.Items)
+        {
+            await using var cmd = new NpgsqlCommand(@"
+                INSERT INTO public.borrow_request_items(request_id,book_id,requested_days,status)
+                VALUES(@request,@book,@days,'pending');", db, tx);
+            cmd.Parameters.AddWithValue("request", requestId);
+            cmd.Parameters.AddWithValue("book", item.BookId);
+            cmd.Parameters.AddWithValue("days", item.RequestedDays);
+            await cmd.ExecuteNonQueryAsync(ct);
+        }
+        await tx.CommitAsync(ct);
+        return Results.Ok(new { message = "Da gui don muon. Cho nhan vien duyet, chua giu cho cuon sach.", requestId, requestCode = code });
+    }
+    catch (OperationCanceledException) when (ct.IsCancellationRequested) { return Results.StatusCode(499); }
+    catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UndefinedTable)
+    { return Results.Json(new { message = "Chua chay SQL migration buoc 58." }, statusCode: 503); }
+    catch (Exception ex)
+    {
+        app.Logger.LogError("Create borrow request failed: {Type}", ex.GetType().Name);
+        return Results.Json(new { message = "Khong the tao don muon." }, statusCode: 503);
+    }
+});
+
+app.MapPost("/api/borrow-requests/{requestId:long}/cancel", async (
+    long requestId, HttpRequest request, SessionService sessions, IConfiguration config, CancellationToken ct) =>
+{
+    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    var actor = sessions.Validate(ReadBearerToken(request));
+    if (actor is null) return Results.Unauthorized();
+    if (actor.Role != "Reader") return Results.StatusCode(403);
+    try
+    {
+        var cs = config.GetConnectionString("AivenPostgres")
+            ?? throw new InvalidOperationException("Database config missing.");
+        await using var db = new NpgsqlConnection(cs);
+        await db.OpenAsync(ct);
+        await using var tx = await db.BeginTransactionAsync(ct);
+        await using (var cmd = new NpgsqlCommand(@"
+            UPDATE public.borrow_requests SET status='cancelled'
+            WHERE request_id=@rid AND reader_user_id=@uid AND status='pending'
+            RETURNING request_id;", db, tx))
+        {
+            cmd.Parameters.AddWithValue("rid", requestId);
+            cmd.Parameters.AddWithValue("uid", actor.UserId);
+            if (await cmd.ExecuteScalarAsync(ct) is null)
+                return Results.Conflict(new { message = "Don khong ton tai, khong thuoc tai khoan hoac da xu ly." });
+        }
+        await using (var cmd = new NpgsqlCommand(@"
+            UPDATE public.borrow_request_items SET status='cancelled'
+            WHERE request_id=@rid AND status='pending';", db, tx))
+        {
+            cmd.Parameters.AddWithValue("rid", requestId);
+            await cmd.ExecuteNonQueryAsync(ct);
+        }
+        await tx.CommitAsync(ct);
+        return Results.Ok(new { message = "Da huy don muon thanh cong." });
+    }
+    catch (OperationCanceledException) when (ct.IsCancellationRequested) { return Results.StatusCode(499); }
+    catch (Exception ex)
+    {
+        app.Logger.LogError("Cancel borrow request failed: {Type}", ex.GetType().Name);
+        return Results.Json(new { message = "Khong the huy don muon." }, statusCode: 503);
+    }
+});
+
 app.Run();
 
 // Du lieu JSON nhan tu WPF hoac Postman/PowerShell.
@@ -1385,4 +2073,34 @@ public sealed class ReaderProfileEditOtpStore
     }
 }
 
+public sealed record ReaderBorrowAccessRequest(bool Block, string? Reason);
 public sealed record CheckoutLoanRequest(string? ReaderUsername, string? CopyCode, int LoanDays);
+
+// Vietnamese-friendly partial search: d/đ, n/N, and accented vowels compare equally.
+// Applied only to public catalog data and active Reader display names on DEV localhost.
+public static class VietnameseSearch
+{
+    public static string Fold(string? text)
+    {
+        if (string.IsNullOrEmpty(text)) return "";
+        string decomposed = text.Replace('đ', 'd').Replace('Đ', 'D')
+            .Normalize(NormalizationForm.FormD);
+        var result = new StringBuilder(decomposed.Length);
+        foreach (char ch in decomposed)
+        {
+            var kind = CharUnicodeInfo.GetUnicodeCategory(ch);
+            if (kind == UnicodeCategory.NonSpacingMark ||
+                kind == UnicodeCategory.SpacingCombiningMark ||
+                kind == UnicodeCategory.EnclosingMark) continue;
+            result.Append(char.ToLowerInvariant(ch));
+        }
+        return result.ToString().Normalize(NormalizationForm.FormC);
+    }
+
+    // `needle` must already be Fold()-normalized.
+    public static bool Matches(string? value, string needle) =>
+        Fold(value).Contains(needle, StringComparison.Ordinal);
+}
+
+public sealed record NewBorrowRequest(List<NewBorrowRequestItem> Items, string? Note);
+public sealed record NewBorrowRequestItem(long BookId, int RequestedDays);

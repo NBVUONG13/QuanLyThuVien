@@ -248,6 +248,81 @@ namespace QuanLyThuVien.Services
             { return new ProfileEditConfirmResult { Message = "Không kết nối được API xác nhận OTP." }; }
         }
 
+
+        // STEP 57: Reader insights and borrow-access decisions for Staff/Admin.
+        public async Task<ReaderInsightResponse> GetReaderInsightsAsync(string token, long readerId)
+        {
+            if (readerId <= 0 || string.IsNullOrWhiteSpace(token))
+                return new ReaderInsightResponse { Message = "Phiên/ID độc giả không hợp lệ." };
+            try
+            {
+                var url = "http://127.0.0.1:5082/api/readers/" + readerId + "/insights";
+                using (var req = new HttpRequestMessage(HttpMethod.Get, url))
+                {
+                    req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+                    using (var res = await Http.SendAsync(req))
+                    {
+                        var json = await res.Content.ReadAsStringAsync();
+                        if (!res.IsSuccessStatusCode)
+                            return new ReaderInsightResponse
+                            {
+                                Message = ReadApiError(json,
+                                "Không xem được chi tiết độc giả (HTTP " + (int)res.StatusCode + ").")
+                            };
+                        var data = DeserializeJson<ReaderInsightResponse>(json);
+                        if (data == null || data.Reader == null || data.Statistics == null)
+                            return new ReaderInsightResponse { Message = "API trả về chi tiết không hợp lệ." };
+                        data.IsSuccess = true;
+                        return data;
+                    }
+                }
+            }
+            catch (Exception ex) when (ex is HttpRequestException || ex is TaskCanceledException ||
+                                      ex is SerializationException || ex is ArgumentException)
+            { return new ReaderInsightResponse { Message = "Không tải được chi tiết độc giả." }; }
+        }
+        public async Task<ReaderBorrowAccessResult> ChangeReaderBorrowAccessAsync(
+            string token, long readerId, bool block, string reason)
+        {
+            if (readerId <= 0 || string.IsNullOrWhiteSpace(token))
+                return new ReaderBorrowAccessResult { Message = "Phiên/ID độc giả không hợp lệ." };
+            try
+            {
+                string url = "http://127.0.0.1:5082/api/readers/" + readerId + "/borrow-access";
+                using (var req = new HttpRequestMessage(HttpMethod.Post, url))
+                {
+                    req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+                    req.Content = new StringContent(SerializeJson(new BorrowAccessEditDto
+                    { Block = block, Reason = reason }), Encoding.UTF8, "application/json");
+                    using (var res = await Http.SendAsync(req))
+                    {
+                        var json = await res.Content.ReadAsStringAsync();
+                        if (!res.IsSuccessStatusCode)
+                            return new ReaderBorrowAccessResult
+                            {
+                                Message = ReadApiError(json,
+                              "Không thay đổi được quyền mượn (HTTP " + (int)res.StatusCode + ").")
+                            };
+                        var data = DeserializeJson<ReaderBorrowAccessResult>(json);
+                        return new ReaderBorrowAccessResult
+                        {
+                            IsSuccess = true,
+                            Message = data?.Message ?? "Cập nhật quyền mượn thành công."
+                        };
+                    }
+                }
+            }
+            catch (Exception ex) when (ex is HttpRequestException || ex is TaskCanceledException ||
+                                      ex is SerializationException || ex is ArgumentException)
+            { return new ReaderBorrowAccessResult { Message = "Không kết nối được API quyền mượn." }; }
+        }
+        [DataContract]
+        private sealed class BorrowAccessEditDto
+        {
+            [DataMember(Name = "block")] public bool Block { get; set; }
+            [DataMember(Name = "reason")] public string Reason { get; set; }
+        }
+
         private static string ReadApiError(string json, string fallback)
         {
             try
@@ -373,6 +448,79 @@ namespace QuanLyThuVien.Services
 
     [DataContract]
     public sealed class ProfileEditConfirmResult
+    {
+        [IgnoreDataMember] public bool IsSuccess { get; set; }
+        [DataMember(Name = "message")] public string Message { get; set; }
+    }
+
+
+    // STEP 57: API DTOs; live binding is done in ReaderManagementViewModel.
+    [DataContract]
+    public sealed class ReaderInsightResponse
+    {
+        [IgnoreDataMember] public bool IsSuccess { get; set; }
+        [DataMember(Name = "message")] public string Message { get; set; }
+        [DataMember(Name = "reader")] public ReaderInsightHeader Reader { get; set; }
+        [DataMember(Name = "statistics")] public ReaderInsightStats Statistics { get; set; }
+        [DataMember(Name = "loans")] public System.Collections.Generic.List<ReaderLoanHistory> Loans { get; set; }
+        [DataMember(Name = "restrictions")] public System.Collections.Generic.List<ReaderAccessEvent> Restrictions { get; set; }
+        [DataMember(Name = "monthlyBorrowCounts")] public System.Collections.Generic.List<ReaderMonthStat> MonthlyBorrowCounts { get; set; }
+    }
+    [DataContract]
+    public sealed class ReaderInsightHeader
+    {
+        [DataMember(Name = "userId")] public long UserId { get; set; }
+        [DataMember(Name = "username")] public string Username { get; set; }
+        [DataMember(Name = "fullName")] public string FullName { get; set; }
+        [DataMember(Name = "readerCode")] public string ReaderCode { get; set; }
+        [DataMember(Name = "tierName")] public string TierName { get; set; }
+        [DataMember(Name = "accountStatus")] public string AccountStatus { get; set; }
+        [DataMember(Name = "phone")] public string Phone { get; set; }
+        [DataMember(Name = "maxActiveCopies")] public int MaxActiveCopies { get; set; }
+        [DataMember(Name = "maxLoanDays")] public int MaxLoanDays { get; set; }
+        [DataMember(Name = "borrowBlocked")] public bool BorrowBlocked { get; set; }
+        public string BorrowAccessText => BorrowBlocked ? "ĐANG BỊ CẤM MƯỢN" : "Được phép mượn";
+    }
+    [DataContract]
+    public sealed class ReaderInsightStats
+    {
+        [DataMember(Name = "totalLoans")] public long TotalLoans { get; set; }
+        [DataMember(Name = "totalCopies")] public long TotalCopies { get; set; }
+        [DataMember(Name = "returnedCopies")] public long ReturnedCopies { get; set; }
+        [DataMember(Name = "activeCopies")] public long ActiveCopies { get; set; }
+        [DataMember(Name = "overdueCount")] public long OverdueCount { get; set; }
+        [DataMember(Name = "totalFine")] public decimal TotalFine { get; set; }
+        [DataMember(Name = "outstandingFine")] public decimal OutstandingFine { get; set; }
+    }
+    [DataContract]
+    public sealed class ReaderLoanHistory
+    {
+        [DataMember(Name = "title")] public string Title { get; set; }
+        [DataMember(Name = "copyCode")] public string CopyCode { get; set; }
+        [DataMember(Name = "borrowedAt")] public string BorrowedAt { get; set; }
+        [DataMember(Name = "dueAt")] public string DueAt { get; set; }
+        [DataMember(Name = "returnedAt")] public string ReturnedAt { get; set; }
+        [DataMember(Name = "status")] public string Status { get; set; }
+        [DataMember(Name = "isOverdue")] public bool IsOverdue { get; set; }
+        public string LateText => IsOverdue ? "Có" : "Không";
+    }
+    [DataContract]
+    public sealed class ReaderAccessEvent
+    {
+        [DataMember(Name = "action")] public string Action { get; set; }
+        [DataMember(Name = "reason")] public string Reason { get; set; }
+        [DataMember(Name = "at")] public string At { get; set; }
+        [DataMember(Name = "by")] public string By { get; set; }
+    }
+    [DataContract]
+    public sealed class ReaderMonthStat
+    {
+        [DataMember(Name = "month")] public string Month { get; set; }
+        [DataMember(Name = "count")] public long Count { get; set; }
+        [IgnoreDataMember] public double Percent { get; set; }
+    }
+    [DataContract]
+    public sealed class ReaderBorrowAccessResult
     {
         [IgnoreDataMember] public bool IsSuccess { get; set; }
         [DataMember(Name = "message")] public string Message { get; set; }

@@ -1,0 +1,226 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:vm="clr-namespace:QuanLyThuVien.ViewModels">
+    <BooleanToVisibilityConverter x:Key="ReaderDetailsBoolToVisibility" />
+    <Style x:Key="DetailSectionTitle" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="18" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="#37284D" />
+        <Setter Property="Margin" Value="0,4,0,13" />
+    </Style>
+    <Style x:Key="DetailLabel" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="12" />
+        <Setter Property="Foreground" Value="#7B6B90" />
+        <Setter Property="Margin" Value="0,0,0,5" />
+    </Style>
+    <Style x:Key="DetailValue" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="16" />
+        <Setter Property="Foreground" Value="#34254B" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+    <Style x:Key="ReaderKpiCard" TargetType="Border">
+        <Setter Property="Background" Value="#F5F1FC" />
+        <Setter Property="CornerRadius" Value="10" />
+        <Setter Property="Padding" Value="16" />
+        <Setter Property="Margin" Value="0,0,12,12" />
+    </Style>
+
+    <!-- A dedicated navigation destination; Parent Window already owns scroll behavior. -->
+    <DataTemplate DataType="{x:Type vm:ReaderDetailPage}">
+        <StackPanel Margin="0,0,0,28" HorizontalAlignment="Stretch">
+            <DockPanel Margin="0,0,0,18" LastChildFill="True">
+                <Button DockPanel.Dock="Left" Command="{Binding BackCommand}" Content="&#x2190;  QUAY LẠI DANH SÁCH"
+                        Background="#EAE5F4" Foreground="#513B80" BorderThickness="0"
+                        Height="43" Padding="16,0" FontWeight="SemiBold" Cursor="Hand"
+                        Margin="0,0,20,0" />
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="HỒ SƠ &amp; LỊCH SỬ ĐỘC GIẢ" FontSize="26" FontWeight="Bold" Foreground="#352549" />
+                    <TextBlock Text="Thống kê mượn/trả, lịch sử và quyền mượn" Foreground="#827391" Margin="0,5,0,0" />
+                </StackPanel>
+            </DockPanel>
+
+            <!-- Always visible: uses the item selected in the list. Does not depend on the insights endpoint. -->
+            <Border DataContext="{Binding Reader}" CornerRadius="11" Background="White"
+                    BorderBrush="#E5DEF0" BorderThickness="1" Padding="21" Margin="0,0,0,16">
+                <StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,14">
+                        <TextBlock Text="&#xE77B;" FontFamily="Segoe MDL2 Assets" FontSize="25"
+                                   Foreground="#7055A4" Margin="0,0,12,0" />
+                        <TextBlock Text="{Binding SelectedReader.FullName, Mode=OneWay, TargetNullValue='Chưa chọn độc giả'}"
+                                   FontSize="23" FontWeight="Bold" Foreground="#352549" />
+                    </StackPanel>
+                    <UniformGrid Columns="2">
+                        <StackPanel Margin="0,0,14,14">
+                            <TextBlock Text="USERNAME" Style="{StaticResource DetailLabel}" />
+                            <TextBlock Text="{Binding SelectedReader.Username, Mode=OneWay}" Style="{StaticResource DetailValue}"/>
+                        </StackPanel>
+                        <StackPanel Margin="0,0,14,14">
+                            <TextBlock Text="MÃ ĐỘC GIẢ" Style="{StaticResource DetailLabel}" />
+                            <TextBlock Text="{Binding SelectedReader.ReaderCode, Mode=OneWay}" Style="{StaticResource DetailValue}"/>
+                        </StackPanel>
+                        <StackPanel Margin="0,0,14,8">
+                            <TextBlock Text="HẠNG ĐỘC GIẢ" Style="{StaticResource DetailLabel}" />
+                            <TextBlock Text="{Binding SelectedReader.TierName, Mode=OneWay}" Style="{StaticResource DetailValue}"/>
+                        </StackPanel>
+                        <StackPanel Margin="0,0,14,8">
+                            <TextBlock Text="TRẠNG THÁI TÀI KHOẢN" Style="{StaticResource DetailLabel}" />
+                            <TextBlock Text="{Binding SelectedReader.Status, Mode=OneWay}" Style="{StaticResource DetailValue}"/>
+                        </StackPanel>
+                    </UniformGrid>
+                    <StackPanel Visibility="{Binding DetailsLoaded, Converter={StaticResource ReaderDetailsBoolToVisibility}}" Margin="0,10,0,0">
+                        <Separator Margin="0,0,0,12" />
+                        <TextBlock Text="Điện thoại liên hệ" Style="{StaticResource DetailLabel}" />
+                        <TextBlock Text="{Binding Insights.Reader.Phone, Mode=OneWay, TargetNullValue='Chưa có'}" Style="{StaticResource DetailValue}" />
+                        <TextBlock Text="{Binding Insights.Reader.BorrowAccessText, Mode=OneWay}" FontSize="15"
+                                   Foreground="#AA4C48" FontWeight="Bold" Margin="0,12,0,0" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <Border DataContext="{Binding Reader}" Background="#F3EDF9" BorderBrush="#DBD0EB"
+                    BorderThickness="1" CornerRadius="9" Padding="13" Margin="0,0,0,16">
+                <DockPanel>
+                    <TextBlock DockPanel.Dock="Left" FontFamily="Segoe MDL2 Assets" Text="&#xE946;"
+                               Foreground="#6A5396" FontSize="17" Margin="0,0,12,0" />
+                    <TextBlock Text="{Binding DecisionMessage, Mode=OneWay}" TextWrapping="Wrap"
+                               Foreground="#624980" FontSize="14" />
+                </DockPanel>
+            </Border>
+
+            <!-- Detailed data, including fines and borrow restrictions, is shown ONLY on successful API load. -->
+            <StackPanel DataContext="{Binding Reader}"
+                        Visibility="{Binding DetailsLoaded, Converter={StaticResource ReaderDetailsBoolToVisibility}}">
+                <TextBlock Text="TỔNG QUAN HOẠT ĐỘNG" Style="{StaticResource DetailSectionTitle}" />
+                <UniformGrid Columns="4" Margin="0,0,0,10">
+                    <Border Style="{StaticResource ReaderKpiCard}">
+                        <StackPanel>
+                            <TextBlock Text="Số phiếu mượn" Style="{StaticResource DetailLabel}" />
+                            <TextBlock Text="{Binding Insights.Statistics.TotalLoans, Mode=OneWay}" FontSize="26" Foreground="#63489A" FontWeight="Bold" />
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource ReaderKpiCard}" Background="#EBF2FF">
+                        <StackPanel>
+                            <TextBlock Text="Tổng lượt cuốn" Style="{StaticResource DetailLabel}" />
+                            <TextBlock Text="{Binding Insights.Statistics.TotalCopies, Mode=OneWay}" FontSize="26" Foreground="#365D9B" FontWeight="Bold" />
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource ReaderKpiCard}" Background="#EAF7F1">
+                        <StackPanel>
+                            <TextBlock Text="Đã trả" Style="{StaticResource DetailLabel}" />
+                            <TextBlock Text="{Binding Insights.Statistics.ReturnedCopies, Mode=OneWay}" FontSize="26" Foreground="#287B60" FontWeight="Bold" />
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource ReaderKpiCard}" Background="#FFF1E6">
+                        <StackPanel>
+                            <TextBlock Text="Đang mượn" Style="{StaticResource DetailLabel}" />
+                            <TextBlock Text="{Binding Insights.Statistics.ActiveCopies, Mode=OneWay}" FontSize="26" Foreground="#A76339" FontWeight="Bold" />
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource ReaderKpiCard}" Background="#FDEFF0">
+                        <StackPanel>
+                            <TextBlock Text="Lượt quá hạn" Style="{StaticResource DetailLabel}" />
+                            <TextBlock Text="{Binding Insights.Statistics.OverdueCount, Mode=OneWay}" FontSize="26" Foreground="#B74955" FontWeight="Bold" />
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource ReaderKpiCard}" Background="#F2F2F5">
+                        <StackPanel>
+                            <TextBlock Text="Phạt đã ghi (VND)" Style="{StaticResource DetailLabel}" />
+                            <TextBlock Text="{Binding Insights.Statistics.TotalFine, Mode=OneWay, StringFormat=N0}" FontSize="24" Foreground="#423E54" FontWeight="Bold" />
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource ReaderKpiCard}" Background="#FDEFF0">
+                        <StackPanel>
+                            <TextBlock Text="Phạt chưa thu (VND)" Style="{StaticResource DetailLabel}" />
+                            <TextBlock Text="{Binding Insights.Statistics.OutstandingFine, Mode=OneWay, StringFormat=N0}" FontSize="24" Foreground="#B74955" FontWeight="Bold" />
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource ReaderKpiCard}">
+                        <StackPanel>
+                            <TextBlock Text="Giới hạn số cuốn" Style="{StaticResource DetailLabel}" />
+                            <TextBlock Text="{Binding Insights.Reader.MaxActiveCopies, Mode=OneWay}" FontSize="26" Foreground="#63489A" FontWeight="Bold" />
+                        </StackPanel>
+                    </Border>
+                </UniformGrid>
+                <TextBlock Text="Lượt quá hạn gồm cuốn trả trễ và cuốn hiện quá hạn. Phạt là các khoản ĐÃ ghi vào DB."
+                           Foreground="#817391" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,18" />
+
+                <Border Background="White" BorderBrush="#E6DFF0" BorderThickness="1" CornerRadius="10"
+                        Padding="20" Margin="0,0,0,16">
+                    <StackPanel>
+                        <TextBlock Text="SỐ LƯỢT MƯỢN THEO THÁNG (6 THÁNG)" Style="{StaticResource DetailSectionTitle}" />
+                        <ItemsControl ItemsSource="{Binding MonthlyBorrowCounts, Mode=OneWay}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Margin="0,4" Height="29">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="84"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="55"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="{Binding Month, Mode=OneWay}" VerticalAlignment="Center" />
+                                        <ProgressBar Grid.Column="1" Minimum="0" Maximum="100" Height="18"
+                                             Value="{Binding Percent, Mode=OneWay}" Foreground="#6B54A2" Background="#EEEAF5" />
+                                        <TextBlock Grid.Column="2" Text="{Binding Count, Mode=OneWay}" Margin="10,0,0,0"
+                                           FontWeight="SemiBold" VerticalAlignment="Center" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </Border>
+
+                <Border Background="White" BorderBrush="#E6DFF0" BorderThickness="1" CornerRadius="10"
+                        Padding="20" Margin="0,0,0,16">
+                    <StackPanel>
+                        <TextBlock Text="LỊCH SỬ MƯỢN / TRẢ THEO TỪNG CUỐN" Style="{StaticResource DetailSectionTitle}" />
+                        <DataGrid ItemsSource="{Binding LoanHistory, Mode=OneWay}" IsReadOnly="True" AutoGenerateColumns="False"
+                              CanUserAddRows="False" Height="235" ScrollViewer.HorizontalScrollBarVisibility="Auto">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Tên sách" Binding="{Binding Title, Mode=OneWay}" Width="2*" MinWidth="190"/>
+                                <DataGridTextColumn Header="Mã cuốn" Binding="{Binding CopyCode, Mode=OneWay}" Width="110"/>
+                                <DataGridTextColumn Header="Mượn (UTC)" Binding="{Binding BorrowedAt, Mode=OneWay}" Width="150"/>
+                                <DataGridTextColumn Header="Hạn trả (UTC)" Binding="{Binding DueAt, Mode=OneWay}" Width="150"/>
+                                <DataGridTextColumn Header="Đã trả (UTC)" Binding="{Binding ReturnedAt, Mode=OneWay}" Width="150"/>
+                                <DataGridTextColumn Header="Trễ hạn" Binding="{Binding LateText, Mode=OneWay}" Width="90"/>
+                                <DataGridTextColumn Header="Trạng thái" Binding="{Binding Status, Mode=OneWay}" Width="120"/>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </StackPanel>
+                </Border>
+
+                <Border Background="White" BorderBrush="#E6DFF0" BorderThickness="1" CornerRadius="10"
+                        Padding="20" Margin="0,0,0,16">
+                    <StackPanel>
+                        <TextBlock Text="QUẢN LÝ QUYỀN MƯỢN" Style="{StaticResource DetailSectionTitle}" />
+                        <TextBlock Text="Chỉ ngăn MƯỢN MỚI; không xóa các phiếu mượn đang mở."
+                               Foreground="#7D6F8D" TextWrapping="Wrap" Margin="0,0,0,10" />
+                        <TextBlock Text="Lý do quyết định (8–500 ký tự)" Style="{StaticResource DetailLabel}" />
+                        <TextBox Text="{Binding RestrictionReason, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                             Height="75" Padding="12" TextWrapping="Wrap" AcceptsReturn="True"
+                             MaxLength="500" Margin="0,4,0,13" />
+                        <WrapPanel Margin="0,0,0,6">
+                            <Button Command="{Binding BlockBorrowCommand}" Background="#B74756" Foreground="White"
+                                Content="CẤM MƯỢN" Height="41" Width="145" BorderThickness="0" Margin="0,0,10,8" />
+                            <Button Command="{Binding UnblockBorrowCommand}" Background="#2A846C" Foreground="White"
+                                Content="MỞ CẤM" Height="41" Width="135" BorderThickness="0" Margin="0,0,10,8" />
+                            <Button Command="{Binding RefreshDetailsCommand}" Background="#EAE5F4" Foreground="#503D79"
+                                Content="LÀM MỚI" Height="41" Width="135" BorderThickness="0" Margin="0,0,10,8" />
+                        </WrapPanel>
+                        <TextBlock Text="LỊCH SỬ CẤM / MỞ CẤM" Style="{StaticResource DetailSectionTitle}" Margin="0,15,0,11" />
+                        <DataGrid ItemsSource="{Binding RestrictionHistory, Mode=OneWay}" IsReadOnly="True"
+                              AutoGenerateColumns="False" CanUserAddRows="False" Height="180"
+                              ScrollViewer.HorizontalScrollBarVisibility="Auto">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Quyết định" Binding="{Binding Action, Mode=OneWay}" Width="130"/>
+                                <DataGridTextColumn Header="Lý do" Binding="{Binding Reason, Mode=OneWay}" Width="2*" MinWidth="220"/>
+                                <DataGridTextColumn Header="Người thực hiện" Binding="{Binding By, Mode=OneWay}" Width="140"/>
+                                <DataGridTextColumn Header="Thời gian (UTC)" Binding="{Binding At, Mode=OneWay}" Width="180"/>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </StackPanel>
+    </DataTemplate>
+</ResourceDictionary>

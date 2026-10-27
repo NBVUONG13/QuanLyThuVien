@@ -26,7 +26,12 @@ namespace QuanLyThuVien.ViewModels
             StaffCommand = new AsyncCommand(_ => NavigateStaffAsync(), _ => IsAdmin);
             ReaderCommand = new AsyncCommand(_ => NavigateReadersAsync(), _ => IsAuthenticated);
             LoansCommand = new AsyncCommand(_ => NavigateLoansAsync(), _ => IsAuthenticated);
+            RequestsCommand = new AsyncCommand(_ => NavigateRequestsAsync(), _ => IsAuthenticated);
             LogoutCommand = new AsyncCommand(_ => LogoutAsync());
+            BackFromReaderDetailsCommand = new ActionCommand(_ =>
+            {
+                if (ReaderPanel != null) CurrentPage = ReaderPanel;
+            });
             PendingCommand = new ActionCommand(p =>
             {
                 if (IsAuthenticated)
@@ -39,6 +44,7 @@ namespace QuanLyThuVien.ViewModels
         public HRManagementViewModel Staff { get; private set; }
         public ReaderManagementViewModel ReaderPanel { get; private set; }
         public BorrowReturnViewModel Loans { get; private set; }
+        public BorrowRequestViewModel Requests { get; private set; }
         public object CurrentPage { get => _currentPage; private set => Set(ref _currentPage, value); }
         public string Username { get => _username; private set => Set(ref _username, value); }
         public string Role { get => _role; private set => Set(ref _role, value); }
@@ -53,8 +59,10 @@ namespace QuanLyThuVien.ViewModels
         public ICommand StaffCommand { get; }
         public ICommand ReaderCommand { get; }
         public ICommand LoansCommand { get; }
+        public ICommand RequestsCommand { get; }
         public ICommand LogoutCommand { get; }
         public ICommand PendingCommand { get; }
+        public ICommand BackFromReaderDetailsCommand { get; }
 
         public async Task InitializeAsync()
         {
@@ -76,12 +84,19 @@ namespace QuanLyThuVien.ViewModels
             (StaffCommand as AsyncCommand)?.Refresh();
             (ReaderCommand as AsyncCommand)?.Refresh();
             (LoansCommand as AsyncCommand)?.Refresh();
+            (RequestsCommand as AsyncCommand)?.Refresh();
 
             // Reuse one BookManagementViewModel for all browsing/search/metadata/copies work.
             Books = new BookManagementViewModel(_token, Role);
             if (IsAdmin) Staff = new HRManagementViewModel(_token);
             ReaderPanel = new ReaderManagementViewModel(_token, Role);
+            ReaderPanel.ReaderDetailRequested += (sender, args) =>
+            {
+                // Navigate to a NEW PAGE instead of a Popup/Window overlay.
+                CurrentPage = new ReaderDetailPage(ReaderPanel, BackFromReaderDetailsCommand);
+            };
             Loans = new BorrowReturnViewModel(_token, Role);
+            Requests = new BorrowRequestViewModel(_token, Role);
             Status = "Đã xác thực phiên: " + Username + " (" + Role + ")";
 
             // Open the bookstore-style home page immediately after login.
@@ -123,6 +138,13 @@ namespace QuanLyThuVien.ViewModels
             await Loans.LoadAsync();
         }
 
+        private async Task NavigateRequestsAsync()
+        {
+            if (!IsAuthenticated || Requests == null) return;
+            CurrentPage = Requests;
+            await Requests.LoadAsync();
+        }
+
         private async Task LogoutAsync()
         {
             if (_loggingOut) return;
@@ -130,6 +152,19 @@ namespace QuanLyThuVien.ViewModels
             try { await _auth.LogoutAsync(_token); }
             finally { LogoutRequested?.Invoke(this, EventArgs.Empty); }
         }
+    }
+
+    // Navigation state for Views/ReaderDetailView.xaml (one real page, no duplicate API logic).
+    public sealed class ReaderDetailPage
+    {
+        public ReaderDetailPage(ReaderManagementViewModel reader, ICommand backCommand)
+        {
+            Reader = reader ?? throw new ArgumentNullException(nameof(reader));
+            BackCommand = backCommand ?? throw new ArgumentNullException(nameof(backCommand));
+        }
+
+        public ReaderManagementViewModel Reader { get; }
+        public ICommand BackCommand { get; }
     }
 
     // Reader view-model stays in the existing MainViewModel.cs (no redundant class/file).
@@ -142,6 +177,43 @@ namespace QuanLyThuVien.ViewModels
         private bool _busy, _otpPending;
         private Guid _pendingRequestId;
         private ReaderProfileItem _me;
+        private ReaderProfileItem _selectedReader;
+        private ReaderInsightResponse _insights;
+        private bool _detailsLoaded, _restrictionBusy;
+        private int _detailVersion;
+        private string _restrictionReason = "", _decisionMessage = "";
+        public ReaderProfileItem SelectedReader
+        {
+            get => _selectedReader;
+            set
+            {
+                if (!Set(ref _selectedReader, value)) return;
+                ++_detailVersion;
+                DetailsLoaded = false;
+                Insights = null;
+                LoanHistory.Clear(); RestrictionHistory.Clear(); MonthlyBorrowCounts.Clear();
+                RefreshAccessCommands();
+            }
+        }
+        public ReaderInsightResponse Insights { get => _insights; private set => Set(ref _insights, value); }
+        public bool DetailsLoaded { get => _detailsLoaded; private set => Set(ref _detailsLoaded, value); }
+        // Navigation is handled by MainViewModel; no modal visibility flag needed.
+        public event EventHandler ReaderDetailRequested;
+        public string RestrictionReason { get => _restrictionReason; set => Set(ref _restrictionReason, value); }
+        public string DecisionMessage { get => _decisionMessage; private set => Set(ref _decisionMessage, value); }
+        public ObservableCollection<ReaderLoanHistory> LoanHistory { get; } = new ObservableCollection<ReaderLoanHistory>();
+        public ObservableCollection<ReaderAccessEvent> RestrictionHistory { get; } = new ObservableCollection<ReaderAccessEvent>();
+        public ObservableCollection<ReaderMonthStat> MonthlyBorrowCounts { get; } = new ObservableCollection<ReaderMonthStat>();
+        public ICommand OpenReaderDetailsCommand { get; }
+        public ICommand RefreshDetailsCommand { get; }
+        public ICommand BlockBorrowCommand { get; }
+        public ICommand UnblockBorrowCommand { get; }
+        private void RefreshAccessCommands()
+        {
+            (RefreshDetailsCommand as AsyncCommand)?.Refresh();
+            (BlockBorrowCommand as AsyncCommand)?.Refresh();
+            (UnblockBorrowCommand as AsyncCommand)?.Refresh();
+        }
 
         public ReaderManagementViewModel(string token, string role)
         {
@@ -152,6 +224,31 @@ namespace QuanLyThuVien.ViewModels
             StartProfileEditCommand = new AsyncCommand(_ => StartProfileEditAsync(), _ => IsReader && !Busy && !OtpPending);
             ConfirmProfileEditCommand = new AsyncCommand(_ => ConfirmProfileEditAsync(), _ => IsReader && !Busy && OtpPending);
             CancelProfileEditCommand = new ActionCommand(_ => CancelProfileEdit(), _ => IsReader && !Busy);
+            // Works both from the selected-row action and the clearly visible toolbar button.
+            // Keep CanExecute independent of the DataGrid row binding so the action never
+            // appears mysteriously disabled while the Reader list is visible.
+            OpenReaderDetailsCommand = new AsyncCommand(async parameter =>
+            {
+                if (!CanManageReaders) return;
+                var reader = parameter as ReaderProfileItem ?? SelectedReader;
+                if (reader == null)
+                {
+                    Message = "Hãy chọn một độc giả trong bảng trước khi xem chi tiết.";
+                    return;
+                }
+                SelectedReader = reader;
+                // Navigate BEFORE the API call. On failure the page remains visible,
+                // showing SelectedReader and an explicit error message.
+                DetailsLoaded = false;
+                DecisionMessage = "Đang tải thống kê, lịch sử và quyền mượn...";
+                ReaderDetailRequested?.Invoke(this, EventArgs.Empty);
+                await LoadSelectedDetailsAsync();
+            }, parameter => CanManageReaders);
+            RefreshDetailsCommand = new AsyncCommand(_ => LoadSelectedDetailsAsync(), _ => CanManageReaders && SelectedReader != null && !_restrictionBusy);
+            BlockBorrowCommand = new AsyncCommand(_ => UpdateBorrowAccessAsync(true),
+                _ => CanManageReaders && DetailsLoaded && Insights?.Reader != null && !Insights.Reader.BorrowBlocked && !_restrictionBusy);
+            UnblockBorrowCommand = new AsyncCommand(_ => UpdateBorrowAccessAsync(false),
+                _ => CanManageReaders && DetailsLoaded && Insights?.Reader != null && Insights.Reader.BorrowBlocked && !_restrictionBusy);
         }
 
         public bool IsReader { get; }
@@ -232,6 +329,61 @@ namespace QuanLyThuVien.ViewModels
             }
             catch (Exception) { Message = "Không thể tải dữ liệu độc giả lúc này."; }
             finally { Busy = false; }
+        }
+
+        private async Task LoadSelectedDetailsAsync()
+        {
+            if (!CanManageReaders || SelectedReader == null) return;
+            int version = _detailVersion;
+            long readerId = SelectedReader.UserId;
+            DecisionMessage = "Đang tải chi tiết và thống kê Reader...";
+            try
+            {
+                var data = await _client.GetReaderInsightsAsync(_token, readerId);
+                if (version != _detailVersion || SelectedReader?.UserId != readerId) return;
+                if (!data.IsSuccess) { DecisionMessage = string.IsNullOrWhiteSpace(data.Message) ? "Không tải được thống kê. Hãy xem lỗi SQLSTATE trong terminal API." : data.Message; return; }
+                Insights = data;
+                LoanHistory.Clear();
+                if (data.Loans != null) foreach (var x in data.Loans) LoanHistory.Add(x);
+                RestrictionHistory.Clear();
+                if (data.Restrictions != null) foreach (var x in data.Restrictions) RestrictionHistory.Add(x);
+                MonthlyBorrowCounts.Clear();
+                long max = 1;
+                if (data.MonthlyBorrowCounts != null)
+                    foreach (var x in data.MonthlyBorrowCounts) max = Math.Max(max, x.Count);
+                if (data.MonthlyBorrowCounts != null)
+                    foreach (var x in data.MonthlyBorrowCounts)
+                    {
+                        x.Percent = 100.0 * x.Count / max;
+                        MonthlyBorrowCounts.Add(x);
+                    }
+                DetailsLoaded = true;
+                DecisionMessage = "Đã tải chi tiết từ PostgreSQL. Số lần quá hạn gồm trả trễ và đang quá hạn.";
+            }
+            catch (Exception) { if (version == _detailVersion) DecisionMessage = "Không tải được chi tiết Reader."; }
+            finally { RefreshAccessCommands(); }
+        }
+        private async Task UpdateBorrowAccessAsync(bool block)
+        {
+            if (!CanManageReaders || !DetailsLoaded || SelectedReader == null || _restrictionBusy) return;
+            string reason = (RestrictionReason ?? "").Trim();
+            if (reason.Length < 8 || reason.Length > 500)
+            { DecisionMessage = "Cần nhập lý do từ 8 đến 500 ký tự."; return; }
+            _restrictionBusy = true; RefreshAccessCommands();
+            long readerId = SelectedReader.UserId;
+            try
+            {
+                var result = await _client.ChangeReaderBorrowAccessAsync(_token, readerId, block, reason);
+                DecisionMessage = result.Message;
+                if (result.IsSuccess)
+                {
+                    RestrictionReason = "";
+                    await LoadSelectedDetailsAsync();
+                    DecisionMessage = result.Message;
+                }
+            }
+            catch (Exception) { DecisionMessage = "Không đổi được quyền mượn của Reader."; }
+            finally { _restrictionBusy = false; RefreshAccessCommands(); }
         }
 
         private async Task StartProfileEditAsync()
@@ -321,6 +473,15 @@ namespace QuanLyThuVien.ViewModels
         private readonly LoanApiClient _api = new LoanApiClient();
         private string _message = "", _readerUsername = "", _copyCode = "", _loanDays = "14", _copyQuery = "";
         private bool _busy;
+        private int _readerSearchVersion, _copySearchVersion;
+        private bool _suppressReaderSearch;
+        private string _readerSearchMessage = "Nhập tên, username hoặc mã độc giả để xem gợi ý.";
+        private string _copySearchMessage = "Gõ tên sách/mã cuốn; bảng bên dưới tự lọc.";
+        private bool _showReaderSuggestions;
+        private bool _showBookSuggestions;
+        private bool _suppressCopySearch;
+        private LoanBookSuggestion _selectedBookSuggestion;
+        private LoanReaderSuggestion _selectedReader;
         private LoanItem _selectedLoan;
         private AvailableLoanCopy _selectedCopy;
 
@@ -339,11 +500,86 @@ namespace QuanLyThuVien.ViewModels
         public bool IsReader { get; }
         public ObservableCollection<LoanItem> Loans { get; } = new ObservableCollection<LoanItem>();
         public ObservableCollection<AvailableLoanCopy> AvailableCopies { get; } = new ObservableCollection<AvailableLoanCopy>();
+        public ObservableCollection<LoanReaderSuggestion> ReaderSuggestions { get; } =
+            new ObservableCollection<LoanReaderSuggestion>();
+        public ObservableCollection<LoanBookSuggestion> BookSuggestions { get; } =
+            new ObservableCollection<LoanBookSuggestion>();
+        public bool ShowBookSuggestions { get => _showBookSuggestions; set => Set(ref _showBookSuggestions, value); }
+        public LoanBookSuggestion SelectedBookSuggestion
+        {
+            get => _selectedBookSuggestion;
+            set
+            {
+                if (!Set(ref _selectedBookSuggestion, value) || value == null) return;
+                // Selecting a suggested TITLE is not the same as selecting a physical copy.
+                _suppressCopySearch = true;
+                CopyQuery = value.Title;
+                _suppressCopySearch = false;
+                ++_copySearchVersion; // Discard older autocomplete requests.
+                ShowBookSuggestions = false;
+                BookSuggestions.Clear();
+                CopyCode = value.AvailableCopies > 0 ? value.FirstAvailableCopyCode : "";
+                CopySearchMessage = value.AvailableCopies > 0
+                    ? "Đã chọn: " + value.Title + ". Gợi ý mã cuốn: " + CopyCode + "."
+                    : "Đã chọn: " + value.Title + ". Chưa có cuốn vật lý có thể mượn; cần nhập kho trước.";
+                // Refresh the list of AVAILABLE copies for this selected book.
+                _ = ShowCopiesForBookAsync(value.Title, _copySearchVersion);
+            }
+        }
+
+        public string ReaderSearchMessage { get => _readerSearchMessage; private set => Set(ref _readerSearchMessage, value); }
+        public string CopySearchMessage { get => _copySearchMessage; private set => Set(ref _copySearchMessage, value); }
+        public bool ShowReaderSuggestions { get => _showReaderSuggestions; set => Set(ref _showReaderSuggestions, value); }
+        public LoanReaderSuggestion SelectedReader
+        {
+            get => _selectedReader;
+            set
+            {
+                if (!Set(ref _selectedReader, value) || value == null) return;
+                _suppressReaderSearch = true;
+                ReaderUsername = value.Username; // Exact username required by checkout API.
+                _suppressReaderSearch = false;
+                _readerSearchVersion++;
+                ReaderSuggestions.Clear();
+                ShowReaderSuggestions = false;
+                ReaderSearchMessage = "Đã chọn: " + value.FullName + " (@" + value.Username + ").";
+            }
+        }
         public string Message { get => _message; private set => Set(ref _message, value); }
-        public string ReaderUsername { get => _readerUsername; set => Set(ref _readerUsername, value); }
+        public string ReaderUsername
+        {
+            get => _readerUsername;
+            set
+            {
+                if (!Set(ref _readerUsername, value) || _suppressReaderSearch) return;
+                int version = ++_readerSearchVersion;
+                ReaderSuggestions.Clear();
+                ShowReaderSuggestions = false;
+                _selectedReader = null; Notify(nameof(SelectedReader));
+                if (CanManage) _ = SuggestReadersAsync(value, version);
+            }
+        }
         public string CopyCode { get => _copyCode; set => Set(ref _copyCode, value); }
         public string LoanDays { get => _loanDays; set => Set(ref _loanDays, value); }
-        public string CopyQuery { get => _copyQuery; set => Set(ref _copyQuery, value); }
+        public string CopyQuery
+        {
+            get => _copyQuery;
+            set
+            {
+                if (!Set(ref _copyQuery, value) || _suppressCopySearch) return;
+                int version = ++_copySearchVersion;
+                BookSuggestions.Clear();
+                ShowBookSuggestions = false;
+                _selectedBookSuggestion = null;
+                Notify(nameof(SelectedBookSuggestion));
+                if (string.IsNullOrWhiteSpace(value))
+                {
+                    CopySearchMessage = "Gõ tên sách để xem gợi ý ngay bên dưới.";
+                    return;
+                }
+                if (CanManage) _ = SuggestCopiesAsync(value, version);
+            }
+        }
         public bool Busy
         {
             get => _busy;
@@ -371,13 +607,106 @@ namespace QuanLyThuVien.ViewModels
             set
             {
                 if (!Set(ref _selectedCopy, value)) return;
-                if (value != null) CopyCode = value.CopyCode;
+                if (value != null)
+                {
+                    CopyCode = value.CopyCode;
+                    ShowBookSuggestions = false;
+                }
             }
         }
         public ICommand RefreshCommand { get; }
         public ICommand SearchAvailableCommand { get; }
         public ICommand CheckoutCommand { get; }
         public ICommand ReturnCommand { get; }
+
+        // Debounce on UI synchronization context; stale HTTP replies must never overwrite newer text.
+        private async Task SuggestReadersAsync(string query, int version)
+        {
+            if (string.IsNullOrWhiteSpace(query))
+            {
+                ReaderSearchMessage = "Nhập tên, username hoặc mã độc giả để xem gợi ý.";
+                return;
+            }
+            try
+            {
+                await Task.Delay(260);
+                if (version != _readerSearchVersion) return;
+                var result = await _api.GetReaderSuggestionsAsync(_token, query);
+                if (version != _readerSearchVersion) return;
+                if (!result.IsSuccess)
+                {
+                    ReaderSearchMessage = result.Message ?? "Lỗi tìm Reader.";
+                    return;
+                }
+                Replace(ReaderSuggestions, result.Readers);
+                ShowReaderSuggestions = ReaderSuggestions.Count > 0;
+                ReaderSearchMessage = ReaderSuggestions.Count == 0
+                    ? "Không có độc giả phù hợp."
+                    : "Chọn đúng độc giả bên dưới (tối đa 30 gợi ý).";
+            }
+            catch (Exception)
+            {
+                if (version == _readerSearchVersion) ReaderSearchMessage = "Không tải được gợi ý độc giả.";
+            }
+        }
+
+        private async Task SuggestCopiesAsync(string query, int version)
+        {
+            try
+            {
+                await Task.Delay(260);
+                if (version != _copySearchVersion) return;
+                // Suggestions search all CATALOGUE books; copy list is a separate API call.
+                var booksTask = _api.GetBookSuggestionsAsync(_token, query);
+                var copiesTask = _api.GetAvailableCopiesAsync(_token, query);
+                await Task.WhenAll(booksTask, copiesTask);
+                if (version != _copySearchVersion) return;
+                var books = await booksTask;
+                var copies = await copiesTask;
+                if (!books.IsSuccess)
+                {
+                    ShowBookSuggestions = false;
+                    CopySearchMessage = books.Message ?? "Lỗi tìm đầu sách.";
+                    return;
+                }
+                Replace(BookSuggestions, books.Books);
+                ShowBookSuggestions = BookSuggestions.Count > 0;
+                if (copies.IsSuccess)
+                {
+                    Replace(AvailableCopies, copies.Copies);
+                    SelectedCopy = null;
+                }
+                CopySearchMessage = BookSuggestions.Count == 0
+                    ? "Không có đầu sách nào khớp từ khóa."
+                    : "Có " + BookSuggestions.Count + " đầu sách phù hợp. Chọn từ dropdown; cuốn có thể mượn: "
+                      + (copies.IsSuccess ? AvailableCopies.Count.ToString() : "chưa tải được") + ".";
+            }
+            catch (Exception)
+            {
+                if (version == _copySearchVersion)
+                {
+                    ShowBookSuggestions = false;
+                    CopySearchMessage = "Không tải được gợi ý sách. Kiểm tra kết nối API.";
+                }
+            }
+        }
+
+        private async Task ShowCopiesForBookAsync(string title, int version)
+        {
+            try
+            {
+                var result = await _api.GetAvailableCopiesAsync(_token, title);
+                if (version != _copySearchVersion) return;
+                if (!result.IsSuccess) { CopySearchMessage = result.Message; return; }
+                // Copy search may also match other titles; still allow staff to select manually.
+                Replace(AvailableCopies, result.Copies);
+                SelectedCopy = null;
+            }
+            catch (Exception)
+            {
+                if (version == _copySearchVersion) CopySearchMessage = "Không tải được cuốn vật lý.";
+            }
+        }
 
         private static void Replace<T>(ObservableCollection<T> target, System.Collections.Generic.IEnumerable<T> items)
         {
@@ -400,6 +729,9 @@ namespace QuanLyThuVien.ViewModels
             if (!response.IsSuccess) { Message = response.Message; return false; }
             Replace(AvailableCopies, response.Copies);
             SelectedCopy = null;
+            CopySearchMessage = AvailableCopies.Count == 0
+                ? "Không có cuốn còn sẵn phù hợp."
+                : "Có " + AvailableCopies.Count + " cuốn còn sẵn (tối đa 100).";
             return true;
         }
         public async Task LoadAsync()
@@ -452,6 +784,8 @@ namespace QuanLyThuVien.ViewModels
                 Message = result.Message;
                 if (!result.IsSuccess) return;
                 CopyCode = "";
+                ReaderSuggestions.Clear(); ShowReaderSuggestions = false;
+                BookSuggestions.Clear(); ShowBookSuggestions = false;
                 // Refresh both ObservableCollections in-place for immediate UI updates.
                 await FetchLoansAsync();
                 await FetchCopiesAsync();
@@ -476,6 +810,261 @@ namespace QuanLyThuVien.ViewModels
                 Message = result.Message;
             }
             catch (Exception) { Message = "Không thể ghi nhận trả sách lúc này."; }
+            finally { Busy = false; }
+        }
+    }
+
+
+    // Step58: Reader's request cart. Requests are NOT loans; Staff approval is a later module.
+    // This is a VM TYPE in the existing MainViewModel.cs, not another screen or duplicate service.
+    public sealed class BorrowRequestViewModel : MvvmBase
+    {
+        private readonly string _token;
+        private readonly LoanApiClient _api = new LoanApiClient();
+        private bool _busy, _suppressSearch, _showSuggestions;
+        private int _searchVersion;
+        private string _message = "", _searchText = "", _daysText = "14", _note = "";
+        private string _catalogStatus = "Đang tải danh mục đầu sách...";
+        private LoanBookSuggestion _selectedSuggestion;
+        private BorrowRequestCartItem _selectedCartItem;
+        private BorrowRequestSummary _selectedRequest;
+
+        public BorrowRequestViewModel(string token, string role)
+        {
+            _token = token;
+            IsReader = role == "Reader";
+            CanManage = role == "Staff" || role == "Admin";
+            RefreshCommand = new AsyncCommand(_ => LoadAsync(), _ => !Busy);
+            AddBookCommand = new ActionCommand(_ => AddBook(),
+                _ => IsReader && !Busy && SelectedSuggestion != null);
+            RemoveBookCommand = new ActionCommand(_ => RemoveBook(),
+                _ => IsReader && !Busy && SelectedCartItem != null);
+            SubmitCommand = new AsyncCommand(_ => SubmitAsync(),
+                _ => IsReader && !Busy && Cart.Count > 0);
+            CancelRequestCommand = new AsyncCommand(_ => CancelAsync(),
+                _ => IsReader && !Busy && SelectedRequest != null && SelectedRequest.CanCancel);
+        }
+        public bool IsReader { get; }
+        public bool CanManage { get; }
+        public ObservableCollection<LoanBookSuggestion> Suggestions { get; } =
+            new ObservableCollection<LoanBookSuggestion>();
+        public ObservableCollection<BorrowRequestCartItem> Cart { get; } =
+            new ObservableCollection<BorrowRequestCartItem>();
+        public ObservableCollection<BorrowRequestSummary> Requests { get; } =
+            new ObservableCollection<BorrowRequestSummary>();
+        public ICommand RefreshCommand { get; }
+        public ICommand AddBookCommand { get; }
+        public ICommand RemoveBookCommand { get; }
+        public ICommand SubmitCommand { get; }
+        public ICommand CancelRequestCommand { get; }
+        public string Message { get => _message; private set => Set(ref _message, value); }
+        public string CatalogStatus { get => _catalogStatus; private set => Set(ref _catalogStatus, value); }
+        public string Note { get => _note; set => Set(ref _note, value); }
+        public string DaysText { get => _daysText; set => Set(ref _daysText, value); }
+        public bool ShowSuggestions { get => _showSuggestions; private set => Set(ref _showSuggestions, value); }
+        public bool Busy
+        {
+            get => _busy;
+            private set
+            {
+                if (!Set(ref _busy, value)) return;
+                RefreshCommands();
+            }
+        }
+        public string SearchText
+        {
+            get => _searchText;
+            set
+            {
+                if (!Set(ref _searchText, value) || _suppressSearch) return;
+                int version = ++_searchVersion;
+                Suggestions.Clear();
+                ShowSuggestions = false;
+                SelectedSuggestion = null;
+                if (IsReader)
+                {
+                    CatalogStatus = "Đang tìm đầu sách...";
+                    _ = SearchAsync(value ?? "", version);
+                }
+            }
+        }
+        public LoanBookSuggestion SelectedSuggestion
+        {
+            get => _selectedSuggestion;
+            set
+            {
+                if (!Set(ref _selectedSuggestion, value)) return;
+                (AddBookCommand as ActionCommand)?.Refresh();
+                if (value == null) return;
+                _suppressSearch = true;
+                SearchText = value.Title;
+                _suppressSearch = false;
+                ++_searchVersion;
+                ShowSuggestions = false;
+            }
+        }
+        public BorrowRequestCartItem SelectedCartItem
+        {
+            get => _selectedCartItem;
+            set
+            {
+                if (Set(ref _selectedCartItem, value))
+                    (RemoveBookCommand as ActionCommand)?.Refresh();
+            }
+        }
+        public BorrowRequestSummary SelectedRequest
+        {
+            get => _selectedRequest;
+            set
+            {
+                if (Set(ref _selectedRequest, value))
+                    (CancelRequestCommand as AsyncCommand)?.Refresh();
+            }
+        }
+        private void RefreshCommands()
+        {
+            (RefreshCommand as AsyncCommand)?.Refresh();
+            (AddBookCommand as ActionCommand)?.Refresh();
+            (RemoveBookCommand as ActionCommand)?.Refresh();
+            (SubmitCommand as AsyncCommand)?.Refresh();
+            (CancelRequestCommand as AsyncCommand)?.Refresh();
+        }
+        private async Task SearchAsync(string query, int version)
+        {
+            try
+            {
+                await Task.Delay(260);
+                if (version != _searchVersion) return;
+                if (query.Length > 80)
+                { CatalogStatus = "Từ khóa tối đa 80 ký tự."; return; }
+                var result = await _api.GetRequestBookSuggestionsAsync(_token, query);
+                if (version != _searchVersion) return;
+                if (!result.IsSuccess)
+                { CatalogStatus = result.Message ?? "Lỗi tải danh mục."; return; }
+                Replace(Suggestions, result.Books);
+                ShowSuggestions = Suggestions.Count > 0;
+                CatalogStatus = Suggestions.Count == 0
+                    ? "Không có đầu sách phù hợp. Hãy thử từ khóa khác."
+                    : (string.IsNullOrWhiteSpace(query)
+                        ? "Danh mục: " + Suggestions.Count + " đầu sách. Chọn sách để thêm vào đơn."
+                        : "Tìm thấy " + Suggestions.Count + " đầu sách phù hợp.");
+            }
+            catch (Exception) { if (version == _searchVersion) CatalogStatus = "Không tải được đầu sách."; }
+        }
+        private void AddBook()
+        {
+            if (!IsReader || Busy || SelectedSuggestion == null) return;
+            int days;
+            if (!int.TryParse(DaysText, out days) || days < 1 || days > 90)
+            { Message = "Nhập số ngày mượn từ 1 đến 90."; return; }
+            if (Cart.Count >= 5)
+            { Message = "Mỗi đơn tối đa 5 đầu sách."; return; }
+            var book = SelectedSuggestion;
+            foreach (var line in Cart)
+                if (line.BookId == book.BookId)
+                { Message = "Đầu sách này đã có trong đơn."; return; }
+            Cart.Add(new BorrowRequestCartItem
+            {
+                BookId = book.BookId,
+                Title = book.Title,
+                Authors = book.Authors,
+                RequestedDays = days,
+                AvailableCopies = book.AvailableCopies
+            });
+            SelectedSuggestion = null;
+            _suppressSearch = true;
+            SearchText = "";
+            _suppressSearch = false;
+            int version = ++_searchVersion;
+            Suggestions.Clear(); ShowSuggestions = false;
+            CatalogStatus = "Đang tải lại danh mục...";
+            _ = SearchAsync("", version);
+            Message = "Đã thêm vào đơn (" + Cart.Count + "/5). Chưa gửi yêu cầu.";
+            RefreshCommands();
+        }
+        private void RemoveBook()
+        {
+            if (SelectedCartItem == null) return;
+            Cart.Remove(SelectedCartItem);
+            SelectedCartItem = null;
+            RefreshCommands();
+            Message = "Đã bỏ đầu sách khỏi đơn.";
+        }
+        private static void Replace<T>(ObservableCollection<T> target,
+            System.Collections.Generic.IEnumerable<T> source)
+        {
+            target.Clear();
+            if (source == null) return;
+            foreach (var item in source) target.Add(item);
+        }
+        private async Task<bool> ReloadAsync()
+        {
+            var response = await _api.GetBorrowRequestsAsync(_token);
+            if (!response.IsSuccess) { Message = response.Message; return false; }
+            Replace(Requests, response.Requests);
+            SelectedRequest = null;
+            return true;
+        }
+        public async Task LoadAsync()
+        {
+            if (Busy) return;
+            Busy = true;
+            Message = "Đang tải đơn mượn...";
+            try
+            {
+                if (await ReloadAsync())
+                    Message = IsReader
+                        ? "Đơn của bạn: " + Requests.Count + " (tối đa 100)."
+                        : "Các yêu cầu mới nhất: " + Requests.Count + " (tối đa 100).";
+                // Reader must see REAL BOOK TITLES as soon as the page opens,
+                // even if there are zero physical copies and SearchText is empty.
+                if (IsReader)
+                {
+                    CatalogStatus = "Đang tải danh mục...";
+                    await SearchAsync(SearchText ?? "", ++_searchVersion);
+                }
+            }
+            catch (Exception) { Message = "Không tải được danh sách đơn mượn."; }
+            finally { Busy = false; }
+        }
+        private async Task SubmitAsync()
+        {
+            if (!IsReader || Busy || Cart.Count == 0) return;
+            Busy = true;
+            Message = "Đang gửi yêu cầu...";
+            try
+            {
+                var items = new System.Collections.Generic.List<BorrowRequestLine>();
+                foreach (var item in Cart)
+                    items.Add(new BorrowRequestLine
+                    {
+                        BookId = item.BookId,
+                        RequestedDays = item.RequestedDays
+                    });
+                var result = await _api.SubmitBorrowRequestAsync(_token, items, Note);
+                Message = result.Message;
+                if (!result.IsSuccess) return;
+                Cart.Clear(); SelectedCartItem = null; Note = "";
+                await ReloadAsync();
+                Message = result.Message;
+            }
+            catch (Exception) { Message = "Không gửi được yêu cầu."; }
+            finally { Busy = false; }
+        }
+        private async Task CancelAsync()
+        {
+            if (!IsReader || Busy || SelectedRequest == null || !SelectedRequest.CanCancel) return;
+            var id = SelectedRequest.RequestId;
+            Busy = true;
+            try
+            {
+                var result = await _api.CancelBorrowRequestAsync(_token, id);
+                Message = result.Message;
+                if (!result.IsSuccess) return;
+                await ReloadAsync();
+                Message = result.Message;
+            }
+            catch (Exception) { Message = "Không hủy được đơn."; }
             finally { Busy = false; }
         }
     }

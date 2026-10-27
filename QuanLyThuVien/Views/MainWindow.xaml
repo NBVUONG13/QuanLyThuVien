@@ -7,360 +7,610 @@
         Width="1230" Height="785" MinWidth="920" MinHeight="580"
         WindowStartupLocation="CenterScreen" Background="#F6F7FC">
     <Window.Resources>
-        <BooleanToVisibilityConverter x:Key="BoolVisibility" />
-        <DataTemplate DataType="{x:Type vm:DashboardViewModel}">
-            <views:DashboardView />
-        </DataTemplate>
-        <DataTemplate DataType="{x:Type vm:BookManagementViewModel}">
-            <views:BookManagementView />
-        </DataTemplate>
-        <DataTemplate DataType="{x:Type vm:HRManagementViewModel}">
-            <views:HRManagementView />
-        </DataTemplate>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <!-- The reader detail is a separate, navigable XAML view. -->
+                <ResourceDictionary Source="/QuanLyThuVien;component/Views/ReaderDetailView.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+            <BooleanToVisibilityConverter x:Key="BoolVisibility" />
+            <DataTemplate DataType="{x:Type vm:DashboardViewModel}">
+                <views:DashboardView />
+            </DataTemplate>
+            <DataTemplate DataType="{x:Type vm:BookManagementViewModel}">
+                <views:BookManagementView />
+            </DataTemplate>
+            <DataTemplate DataType="{x:Type vm:HRManagementViewModel}">
+                <views:HRManagementView />
+            </DataTemplate>
 
-        <!-- Reader profile and Staff/Admin listing. Inline template reuses existing MainWindow.xaml.
+            <!-- Reader profile and Staff/Admin listing. Inline template reuses existing MainWindow.xaml.
      No parallel View, code-behind, or extra project entries. -->
-        <DataTemplate DataType="{x:Type vm:ReaderManagementViewModel}">
-            <Grid HorizontalAlignment="Stretch">
-                <StackPanel Margin="0,0,0,20">
-                    <StackPanel Orientation="Horizontal" Margin="0,0,0,5">
-                        <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE77B;" FontSize="25" Foreground="#6951A1"
+            <DataTemplate DataType="{x:Type vm:ReaderManagementViewModel}">
+                <Grid HorizontalAlignment="Stretch">
+                    <StackPanel Margin="0,0,0,20">
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,5">
+                            <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE77B;" FontSize="25" Foreground="#6951A1"
                            VerticalAlignment="Center" Margin="0,0,12,0" />
-                        <TextBlock Text="HỒ SƠ ĐỘC GIẢ" FontSize="27" FontWeight="Bold" Foreground="#35294D" />
-                    </StackPanel>
-                    <TextBlock Text="Thông tin cá nhân và xác minh thay đổi" Foreground="#796A8E"
+                            <TextBlock Text="HỒ SƠ ĐỘC GIẢ" FontSize="27" FontWeight="Bold" Foreground="#35294D" />
+                        </StackPanel>
+                        <TextBlock Text="Thông tin cá nhân và xác minh thay đổi" Foreground="#796A8E"
                        FontSize="13" Margin="0,0,0,16" />
-                    <Border Background="#F1ECFA" CornerRadius="7" Padding="13" Margin="0,0,0,16">
-                        <DockPanel>
-                            <TextBlock DockPanel.Dock="Left" FontFamily="Segoe MDL2 Assets" Text="&#xE946;"
+                        <Border Background="#F1ECFA" CornerRadius="7" Padding="13" Margin="0,0,0,16">
+                            <DockPanel>
+                                <TextBlock DockPanel.Dock="Left" FontFamily="Segoe MDL2 Assets" Text="&#xE946;"
                                Foreground="#6951A1" FontSize="16" Margin="0,0,11,0" />
-                            <TextBlock Text="{Binding Message, Mode=OneWay}" Foreground="#514074"
+                                <TextBlock Text="{Binding Message, Mode=OneWay}" Foreground="#514074"
                                TextWrapping="Wrap" VerticalAlignment="Center" />
-                        </DockPanel>
-                    </Border>
-
-                    <!-- Read-only account data: the server is the source of truth. -->
-                    <StackPanel Visibility="{Binding IsReader, Converter={StaticResource BoolVisibility}}">
-                        <Border Background="White" BorderBrush="#E6DFF1" BorderThickness="1"
-                        CornerRadius="10" Padding="20" Margin="0,0,0,17">
-                            <StackPanel>
-                                <DockPanel Margin="0,0,0,15">
-                                    <TextBlock DockPanel.Dock="Left" FontFamily="Segoe MDL2 Assets" Text="&#xE8A5;"
-                                       Foreground="#6951A1" FontSize="20" Margin="0,0,12,0" />
-                                    <TextBlock Text="Thông tin hồ sơ hiện tại" FontSize="18" FontWeight="SemiBold"
-                                       Foreground="#35294D" />
-                                </DockPanel>
-                                <Grid>
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="175" />
-                                        <ColumnDefinition Width="*" />
-                                    </Grid.ColumnDefinitions>
-                                    <Grid.RowDefinitions>
-                                        <RowDefinition Height="35"/>
-                                        <RowDefinition Height="35"/>
-                                        <RowDefinition Height="35"/>
-                                        <RowDefinition Height="35"/>
-                                        <RowDefinition Height="35"/>
-                                        <RowDefinition Height="35"/>
-                                        <RowDefinition Height="35"/>
-                                        <RowDefinition Height="35"/>
-                                        <RowDefinition Height="35"/>
-                                    </Grid.RowDefinitions>
-                                    <TextBlock Grid.Row="0" Text="Họ tên" Foreground="#746882" />
-                                    <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding Me.FullName, Mode=OneWay}" FontWeight="SemiBold"/>
-                                    <TextBlock Grid.Row="1" Text="Tên đăng nhập" Foreground="#746882" />
-                                    <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding Me.Username, Mode=OneWay}" />
-                                    <TextBlock Grid.Row="2" Text="Mã độc giả" Foreground="#746882" />
-                                    <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding Me.ReaderCode, Mode=OneWay}" />
-                                    <TextBlock Grid.Row="3" Text="Số điện thoại" Foreground="#746882" />
-                                    <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding Me.Phone, Mode=OneWay}" />
-                                    <TextBlock Grid.Row="4" Text="Đã xác minh SĐT (demo)" Foreground="#746882" />
-                                    <CheckBox Grid.Row="4" Grid.Column="1" IsChecked="{Binding Me.PhoneVerified, Mode=OneWay}"
-                                      IsHitTestVisible="False" Focusable="False" />
-                                    <TextBlock Grid.Row="5" Text="Hạng độc giả" Foreground="#746882" />
-                                    <TextBlock Grid.Row="5" Grid.Column="1" Text="{Binding Me.TierName, Mode=OneWay}" />
-                                    <TextBlock Grid.Row="6" Text="Tối đa cuốn đang mượn" Foreground="#746882" />
-                                    <TextBlock Grid.Row="6" Grid.Column="1" Text="{Binding Me.MaxActiveCopies, Mode=OneWay}" />
-                                    <TextBlock Grid.Row="7" Text="Số ngày mượn tối đa" Foreground="#746882" />
-                                    <TextBlock Grid.Row="7" Grid.Column="1" Text="{Binding Me.MaxLoanDays, Mode=OneWay}" />
-                                    <TextBlock Grid.Row="8" Text="Trạng thái" Foreground="#746882" />
-                                    <TextBlock Grid.Row="8" Grid.Column="1" Text="{Binding Me.Status, Mode=OneWay}" />
-                                </Grid>
-                            </StackPanel>
+                            </DockPanel>
                         </Border>
 
-                        <Border Background="White" BorderBrush="#E6DFF1" BorderThickness="1"
-                        CornerRadius="10" Padding="20">
-                            <StackPanel>
-                                <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
-                                    <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE70F;" Foreground="#6951A1"
-                                       FontSize="20" Margin="0,0,12,0" />
-                                    <TextBlock Text="Chỉnh sửa thông tin liên hệ" Foreground="#35294D"
-                                       FontSize="18" FontWeight="SemiBold" />
+                        <!-- Read-only account data: the server is the source of truth. -->
+                        <StackPanel Visibility="{Binding IsReader, Converter={StaticResource BoolVisibility}}">
+                            <Border Background="White" BorderBrush="#E6DFF1" BorderThickness="1"
+                        CornerRadius="10" Padding="20" Margin="0,0,0,17">
+                                <StackPanel>
+                                    <DockPanel Margin="0,0,0,15">
+                                        <TextBlock DockPanel.Dock="Left" FontFamily="Segoe MDL2 Assets" Text="&#xE8A5;"
+                                       Foreground="#6951A1" FontSize="20" Margin="0,0,12,0" />
+                                        <TextBlock Text="Thông tin hồ sơ hiện tại" FontSize="18" FontWeight="SemiBold"
+                                       Foreground="#35294D" />
+                                    </DockPanel>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="175" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="35"/>
+                                            <RowDefinition Height="35"/>
+                                            <RowDefinition Height="35"/>
+                                            <RowDefinition Height="35"/>
+                                            <RowDefinition Height="35"/>
+                                            <RowDefinition Height="35"/>
+                                            <RowDefinition Height="35"/>
+                                            <RowDefinition Height="35"/>
+                                            <RowDefinition Height="35"/>
+                                        </Grid.RowDefinitions>
+                                        <TextBlock Grid.Row="0" Text="Họ tên" Foreground="#746882" />
+                                        <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding Me.FullName, Mode=OneWay}" FontWeight="SemiBold"/>
+                                        <TextBlock Grid.Row="1" Text="Tên đăng nhập" Foreground="#746882" />
+                                        <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding Me.Username, Mode=OneWay}" />
+                                        <TextBlock Grid.Row="2" Text="Mã độc giả" Foreground="#746882" />
+                                        <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding Me.ReaderCode, Mode=OneWay}" />
+                                        <TextBlock Grid.Row="3" Text="Số điện thoại" Foreground="#746882" />
+                                        <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding Me.Phone, Mode=OneWay}" />
+                                        <TextBlock Grid.Row="4" Text="Đã xác minh SĐT (demo)" Foreground="#746882" />
+                                        <CheckBox Grid.Row="4" Grid.Column="1" IsChecked="{Binding Me.PhoneVerified, Mode=OneWay}"
+                                      IsHitTestVisible="False" Focusable="False" />
+                                        <TextBlock Grid.Row="5" Text="Hạng độc giả" Foreground="#746882" />
+                                        <TextBlock Grid.Row="5" Grid.Column="1" Text="{Binding Me.TierName, Mode=OneWay}" />
+                                        <TextBlock Grid.Row="6" Text="Tối đa cuốn đang mượn" Foreground="#746882" />
+                                        <TextBlock Grid.Row="6" Grid.Column="1" Text="{Binding Me.MaxActiveCopies, Mode=OneWay}" />
+                                        <TextBlock Grid.Row="7" Text="Số ngày mượn tối đa" Foreground="#746882" />
+                                        <TextBlock Grid.Row="7" Grid.Column="1" Text="{Binding Me.MaxLoanDays, Mode=OneWay}" />
+                                        <TextBlock Grid.Row="8" Text="Trạng thái" Foreground="#746882" />
+                                        <TextBlock Grid.Row="8" Grid.Column="1" Text="{Binding Me.Status, Mode=OneWay}" />
+                                    </Grid>
                                 </StackPanel>
-                                <TextBlock Text="Bạn có thể thay đổi họ tên và SĐT. Phải xác nhận OTP trước khi lưu."
+                            </Border>
+
+                            <Border Background="White" BorderBrush="#E6DFF1" BorderThickness="1"
+                        CornerRadius="10" Padding="20">
+                                <StackPanel>
+                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                                        <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE70F;" Foreground="#6951A1"
+                                       FontSize="20" Margin="0,0,12,0" />
+                                        <TextBlock Text="Chỉnh sửa thông tin liên hệ" Foreground="#35294D"
+                                       FontSize="18" FontWeight="SemiBold" />
+                                    </StackPanel>
+                                    <TextBlock Text="Bạn có thể thay đổi họ tên và SĐT. Phải xác nhận OTP trước khi lưu."
                                    Foreground="#746882" TextWrapping="Wrap" Margin="0,0,0,15" />
 
-                                <TextBlock Text="Họ tên mới" FontWeight="SemiBold" Foreground="#514074" />
-                                <TextBox Text="{Binding EditFullName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                    <TextBlock Text="Họ tên mới" FontWeight="SemiBold" Foreground="#514074" />
+                                    <TextBox Text="{Binding EditFullName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                  Height="38" Padding="10,7" Margin="0,6,0,13" MaxLength="200">
-                                    <TextBox.Style>
-                                        <Style TargetType="TextBox">
-                                            <Style.Triggers>
-                                                <DataTrigger Binding="{Binding OtpPending}" Value="True">
-                                                    <Setter Property="IsEnabled" Value="False" />
-                                                </DataTrigger>
-                                            </Style.Triggers>
-                                        </Style>
-                                    </TextBox.Style>
-                                </TextBox>
+                                        <TextBox.Style>
+                                            <Style TargetType="TextBox">
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding OtpPending}" Value="True">
+                                                        <Setter Property="IsEnabled" Value="False" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBox.Style>
+                                    </TextBox>
 
-                                <TextBlock Text="Số điện thoại mới" FontWeight="SemiBold" Foreground="#514074" />
-                                <TextBox Text="{Binding EditPhone, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                    <TextBlock Text="Số điện thoại mới" FontWeight="SemiBold" Foreground="#514074" />
+                                    <TextBox Text="{Binding EditPhone, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                  Height="38" Padding="10,7" Margin="0,6,0,8" MaxLength="24">
-                                    <TextBox.Style>
-                                        <Style TargetType="TextBox">
-                                            <Style.Triggers>
-                                                <DataTrigger Binding="{Binding OtpPending}" Value="True">
-                                                    <Setter Property="IsEnabled" Value="False" />
-                                                </DataTrigger>
-                                            </Style.Triggers>
-                                        </Style>
-                                    </TextBox.Style>
-                                </TextBox>
-                                <TextBlock Text="Định dạng: 0912345678 hoặc +84912345678"
+                                        <TextBox.Style>
+                                            <Style TargetType="TextBox">
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding OtpPending}" Value="True">
+                                                        <Setter Property="IsEnabled" Value="False" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBox.Style>
+                                    </TextBox>
+                                    <TextBlock Text="Định dạng: 0912345678 hoặc +84912345678"
                                    FontSize="12" Foreground="#8B819A" Margin="0,0,0,14" />
 
-                                <WrapPanel Margin="0,0,0,4">
-                                    <Button Command="{Binding StartProfileEditCommand}" Width="175" Height="39"
+                                    <WrapPanel Margin="0,0,0,4">
+                                        <Button Command="{Binding StartProfileEditCommand}" Width="175" Height="39"
                                     Background="#6951A1" Foreground="White" BorderThickness="0" Margin="0,0,12,8">
-                                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
-                                            <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE8D4;" Margin="0,0,9,0" />
-                                            <TextBlock Text="GỬI MÃ OTP" FontWeight="SemiBold" />
-                                        </StackPanel>
-                                    </Button>
-                                    <Button Command="{Binding CancelProfileEditCommand}" Width="145" Height="39"
-                                    Background="#EDE9F5" BorderThickness="0" Foreground="#514074" Margin="0,0,0,8">
-                                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
-                                            <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE711;" Margin="0,0,9,0" />
-                                            <TextBlock Text="HOÀN TÁC" />
-                                        </StackPanel>
-                                    </Button>
-                                </WrapPanel>
-
-                                <Border Background="#F8F4FE" BorderBrush="#E2D8F1" BorderThickness="1"
-                                CornerRadius="7" Padding="15" Margin="0,12,0,0"
-                                Visibility="{Binding OtpPending, Converter={StaticResource BoolVisibility}}">
-                                    <StackPanel>
-                                        <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
-                                            <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE72E;" Foreground="#6951A1"
-                                               FontSize="19" Margin="0,0,9,0" />
-                                            <TextBlock Text="Xác nhận thay đổi bằng OTP" FontWeight="SemiBold"
-                                               FontSize="16" Foreground="#35294D" />
-                                        </StackPanel>
-                                        <TextBlock Text="Nhập mã 6 số trong cửa sổ terminal SmartLibrary.Api (chỉ demo)."
-                                           Foreground="#6D607A" TextWrapping="Wrap" Margin="0,0,0,9" />
-                                        <TextBox Text="{Binding Otp, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                         MaxLength="6" Height="39" Width="220" HorizontalAlignment="Left"
-                                         FontSize="16" Padding="11,7" Margin="0,0,0,12" />
-                                        <Button Command="{Binding ConfirmProfileEditCommand}" Width="190" Height="40"
-                                        HorizontalAlignment="Left" Background="#287C67" Foreground="White" BorderThickness="0">
                                             <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
-                                                <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE73E;" Margin="0,0,9,0" />
-                                                <TextBlock Text="XÁC NHẬN VÀ LƯU" FontWeight="SemiBold" />
+                                                <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE8D4;" Margin="0,0,9,0" />
+                                                <TextBlock Text="GỬI MÃ OTP" FontWeight="SemiBold" />
                                             </StackPanel>
                                         </Button>
-                                    </StackPanel>
-                                </Border>
-                                <TextBlock Text="Bảo mật: OTP hiện in ra terminal để thử nghiệm localhost; chưa gửi SMS và không xác minh được quyền sở hữu số điện thoại thật."
-                                   Foreground="#9A6071" FontSize="12" TextWrapping="Wrap" Margin="0,16,0,0" />
-                            </StackPanel>
-                        </Border>
-                    </StackPanel>
+                                        <Button Command="{Binding CancelProfileEditCommand}" Width="145" Height="39"
+                                    Background="#EDE9F5" BorderThickness="0" Foreground="#514074" Margin="0,0,0,8">
+                                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                                <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE711;" Margin="0,0,9,0" />
+                                                <TextBlock Text="HOÀN TÁC" />
+                                            </StackPanel>
+                                        </Button>
+                                    </WrapPanel>
 
-                    <!-- Staff/Admin listing still uses ObservableCollection, no phone in list. -->
-                    <StackPanel Visibility="{Binding CanManageReaders, Converter={StaticResource BoolVisibility}}">
-                        <Border Background="White" Padding="17" BorderBrush="#E2DAED" BorderThickness="1" CornerRadius="9">
-                            <StackPanel>
-                                <DockPanel Margin="0,0,0,13">
-                                    <StackPanel DockPanel.Dock="Left" Orientation="Horizontal">
-                                        <TextBlock Text="&#xE716;" FontFamily="Segoe MDL2 Assets" FontSize="19"
-                                           Foreground="#6951A1" Margin="0,0,10,0" />
-                                        <TextBlock Text="Tra cứu độc giả" FontSize="18" FontWeight="SemiBold" Foreground="#35294D" />
-                                    </StackPanel>
-                                </DockPanel>
-                                <DockPanel LastChildFill="True">
-                                    <Button DockPanel.Dock="Right" Command="{Binding SearchCommand}" Width="152"
-                                    Height="37" Margin="10,0,0,0" Background="#6951A1" BorderThickness="0" Foreground="White">
-                                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
-                                            <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE721;" Margin="0,0,9,0" />
-                                            <TextBlock Text="TÌM / LÀM MỚI" />
+                                    <Border Background="#F8F4FE" BorderBrush="#E2D8F1" BorderThickness="1"
+                                CornerRadius="7" Padding="15" Margin="0,12,0,0"
+                                Visibility="{Binding OtpPending, Converter={StaticResource BoolVisibility}}">
+                                        <StackPanel>
+                                            <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                                                <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE72E;" Foreground="#6951A1"
+                                               FontSize="19" Margin="0,0,9,0" />
+                                                <TextBlock Text="Xác nhận thay đổi bằng OTP" FontWeight="SemiBold"
+                                               FontSize="16" Foreground="#35294D" />
+                                            </StackPanel>
+                                            <TextBlock Text="Nhập mã 6 số trong cửa sổ terminal SmartLibrary.Api (chỉ demo)."
+                                           Foreground="#6D607A" TextWrapping="Wrap" Margin="0,0,0,9" />
+                                            <TextBox Text="{Binding Otp, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                         MaxLength="6" Height="39" Width="220" HorizontalAlignment="Left"
+                                         FontSize="16" Padding="11,7" Margin="0,0,0,12" />
+                                            <Button Command="{Binding ConfirmProfileEditCommand}" Width="190" Height="40"
+                                        HorizontalAlignment="Left" Background="#287C67" Foreground="White" BorderThickness="0">
+                                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                                    <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE73E;" Margin="0,0,9,0" />
+                                                    <TextBlock Text="XÁC NHẬN VÀ LƯU" FontWeight="SemiBold" />
+                                                </StackPanel>
+                                            </Button>
                                         </StackPanel>
-                                    </Button>
-                                    <TextBox Text="{Binding Query, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                    </Border>
+                                    <TextBlock Text="Bảo mật: OTP hiện in ra terminal để thử nghiệm localhost; chưa gửi SMS và không xác minh được quyền sở hữu số điện thoại thật."
+                                   Foreground="#9A6071" FontSize="12" TextWrapping="Wrap" Margin="0,16,0,0" />
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+
+                        <!-- Staff/Admin listing still uses ObservableCollection, no phone in list. -->
+                        <StackPanel Visibility="{Binding CanManageReaders, Converter={StaticResource BoolVisibility}}">
+                            <Border Background="White" Padding="17" BorderBrush="#E2DAED" BorderThickness="1" CornerRadius="9">
+                                <StackPanel>
+                                    <DockPanel Margin="0,0,0,13">
+                                        <StackPanel DockPanel.Dock="Left" Orientation="Horizontal">
+                                            <TextBlock Text="&#xE716;" FontFamily="Segoe MDL2 Assets" FontSize="19"
+                                           Foreground="#6951A1" Margin="0,0,10,0" />
+                                            <TextBlock Text="Tra cứu độc giả" FontSize="18" FontWeight="SemiBold" Foreground="#35294D" />
+                                        </StackPanel>
+                                    </DockPanel>
+                                    <DockPanel LastChildFill="True">
+                                        <Button DockPanel.Dock="Right" Command="{Binding SearchCommand}" Width="152"
+                                    Height="37" Margin="10,0,0,0" Background="#6951A1" BorderThickness="0" Foreground="White">
+                                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                                <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE721;" Margin="0,0,9,0" />
+                                                <TextBlock Text="TÌM / LÀM MỚI" />
+                                            </StackPanel>
+                                        </Button>
+                                        <TextBox Text="{Binding Query, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                      Height="37" Padding="9,6" MaxLength="100" />
-                                </DockPanel>
-                                <DataGrid ItemsSource="{Binding Readers}" AutoGenerateColumns="False"
+                                    </DockPanel>
+                                    <DataGrid ItemsSource="{Binding Readers, Mode=OneWay}"
+                                  SelectedItem="{Binding SelectedReader, Mode=TwoWay}"
+                                  AutoGenerateColumns="False"
                                   IsReadOnly="True" CanUserAddRows="False" CanUserDeleteRows="False"
-                                  Height="430" Margin="0,14,0,0" Background="White"
+                                  SelectionMode="Single" Height="260" Margin="0,14,0,0" Background="White"
                                   ScrollViewer.HorizontalScrollBarVisibility="Auto">
-                                    <DataGrid.Columns>
-                                        <DataGridTextColumn Header="Mã độc giả" Binding="{Binding ReaderCode, Mode=OneWay}" Width="125" MinWidth="105" />
-                                        <DataGridTextColumn Header="Username" Binding="{Binding Username, Mode=OneWay}" Width="120" MinWidth="100" />
-                                        <DataGridTextColumn Header="Họ tên" Binding="{Binding FullName, Mode=OneWay}" Width="2*" MinWidth="170" />
-                                        <DataGridTextColumn Header="Hạng" Binding="{Binding TierName, Mode=OneWay}" Width="*" MinWidth="115" />
-                                        <DataGridTextColumn Header="Trạng thái" Binding="{Binding Status, Mode=OneWay}" Width="110" MinWidth="95" />
-                                    </DataGrid.Columns>
-                                </DataGrid>
-                                <TextBlock Text="Danh sách không công khai số điện thoại hoặc thông tin định danh của độc giả."
-                                   Foreground="#796A8E" FontSize="12" TextWrapping="Wrap" Margin="0,10,0,0" />
-                            </StackPanel>
-                        </Border>
+                                        <DataGrid.Columns>
+                                            <DataGridTextColumn Header="Mã độc giả" Binding="{Binding ReaderCode, Mode=OneWay}" Width="125" MinWidth="105" />
+                                            <DataGridTextColumn Header="Username" Binding="{Binding Username, Mode=OneWay}" Width="120" MinWidth="100" />
+                                            <DataGridTextColumn Header="Họ tên" Binding="{Binding FullName, Mode=OneWay}" Width="2*" MinWidth="170" />
+                                            <DataGridTextColumn Header="Hạng" Binding="{Binding TierName, Mode=OneWay}" Width="*" MinWidth="115" />
+                                            <DataGridTextColumn Header="Trạng thái" Binding="{Binding Status, Mode=OneWay}" Width="110" MinWidth="95" />
+                                            <DataGridTemplateColumn Header="Chi tiết" Width="130" MinWidth="118">
+                                                <DataGridTemplateColumn.CellTemplate>
+                                                    <DataTemplate>
+                                                        <Button Content="XEM CHI TIẾT" Padding="9,3" MinHeight="26"
+                                                    Foreground="White" Background="#6951A1" BorderThickness="0"
+                                                    Command="{Binding DataContext.ReaderPanel.OpenReaderDetailsCommand, RelativeSource={RelativeSource AncestorType={x:Type Window}}}"
+                                                    CommandParameter="{Binding}" />
+                                                    </DataTemplate>
+                                                </DataGridTemplateColumn.CellTemplate>
+                                            </DataGridTemplateColumn>
+                                        </DataGrid.Columns>
+                                    </DataGrid>
+                                    <Border Background="#F3EEFB" BorderBrush="#E0D6EF" BorderThickness="1"
+                                CornerRadius="8" Padding="12" Margin="0,14,0,0">
+                                        <DockPanel LastChildFill="True">
+                                            <Button DockPanel.Dock="Right" Command="{Binding OpenReaderDetailsCommand}"
+                                        Content="XEM CHI TIẾT ĐỘC GIẢ" Height="42" Width="213"
+                                        Margin="14,0,0,0" Background="#5D4697" Foreground="White"
+                                        FontWeight="SemiBold" BorderThickness="0" Cursor="Hand"/>
+                                            <StackPanel VerticalAlignment="Center">
+                                                <TextBlock Text="Độc giả đang chọn" Foreground="#75688A" FontSize="12"/>
+                                                <TextBlock Text="{Binding SelectedReader.FullName, Mode=OneWay, TargetNullValue='Chưa chọn độc giả'}"
+                                               Foreground="#36274E" FontSize="15" FontWeight="SemiBold"
+                                               TextTrimming="CharacterEllipsis"/>
+                                            </StackPanel>
+                                        </DockPanel>
+                                    </Border>
+                                </StackPanel>
+                            </Border>
+
+                            <!-- Reader details now navigate to ReaderDetailView.xaml; no dialog is hosted here. -->
+                        </StackPanel>
                     </StackPanel>
-                </StackPanel>
-            </Grid>
-        </DataTemplate>
+                </Grid>
+            </DataTemplate>
 
 
-        <!-- Borrow / return uses existing MainWindow shell; VM is in MainViewModel.cs. -->
-        <DataTemplate DataType="{x:Type vm:BorrowReturnViewModel}">
-            <StackPanel Margin="0,0,0,20">
-                <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
-                    <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE8F1;" FontSize="25"
+            <!-- Borrow / return uses existing MainWindow shell; VM is in MainViewModel.cs. -->
+            <DataTemplate DataType="{x:Type vm:BorrowReturnViewModel}">
+                <StackPanel Margin="0,0,0,20">
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                        <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE8F1;" FontSize="25"
                                Foreground="#6951A1" Margin="0,0,13,0" />
-                    <TextBlock Text="MƯỢN / TRẢ SÁCH" FontSize="27" FontWeight="Bold"
+                        <TextBlock Text="MƯỢN / TRẢ SÁCH" FontSize="27" FontWeight="Bold"
                                Foreground="#35294D" />
-                </StackPanel>
-                <TextBlock Text="Quản lý phiếu theo từng cuốn vật lý · Ngày giờ hiển thị theo UTC"
+                    </StackPanel>
+                    <TextBlock Text="Quản lý phiếu theo từng cuốn vật lý · Ngày giờ hiển thị theo UTC"
                            FontSize="12" Foreground="#796A8E" Margin="0,0,0,13" />
-                <Border Background="#F0EBF8" BorderBrush="#D7CBEB" BorderThickness="1"
+                    <Border Background="#F0EBF8" BorderBrush="#D7CBEB" BorderThickness="1"
                         CornerRadius="7" Padding="12" Margin="0,0,0,12">
-                    <DockPanel>
-                        <TextBlock DockPanel.Dock="Left" FontFamily="Segoe MDL2 Assets" Text="&#xE946;"
+                        <DockPanel>
+                            <TextBlock DockPanel.Dock="Left" FontFamily="Segoe MDL2 Assets" Text="&#xE946;"
                                    Foreground="#6951A1" FontSize="17" Margin="0,0,10,0" />
-                        <TextBlock Text="{Binding Message, Mode=OneWay}" TextWrapping="Wrap"
+                            <TextBlock Text="{Binding Message, Mode=OneWay}" TextWrapping="Wrap"
                                    Foreground="#514074" />
-                    </DockPanel>
-                </Border>
-                <Button Command="{Binding RefreshCommand}" Height="38" Width="190"
+                        </DockPanel>
+                    </Border>
+                    <Button Command="{Binding RefreshCommand}" Height="38" Width="190"
                         Background="#6951A1" Foreground="White" BorderThickness="0"
                         HorizontalAlignment="Left" Margin="0,0,0,16">
-                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
-                        <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE72C;" Margin="0,0,8,0" />
-                        <TextBlock Text="TẢI LẠI PHIẾU MƯỢN" />
-                    </StackPanel>
-                </Button>
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                            <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE72C;" Margin="0,0,8,0" />
+                            <TextBlock Text="TẢI LẠI PHIẾU MƯỢN" />
+                        </StackPanel>
+                    </Button>
 
-                <!-- Staff/Admin-only checkout editor; Reader has no write controls. -->
-                <StackPanel Visibility="{Binding CanManage, Converter={StaticResource BoolVisibility}}">
-                    <Border Background="White" BorderBrush="#E6DFF1" BorderThickness="1"
+                    <!-- Staff/Admin-only checkout editor; Reader has no write controls. -->
+                    <StackPanel Visibility="{Binding CanManage, Converter={StaticResource BoolVisibility}}">
+                        <Border Background="White" BorderBrush="#E6DFF1" BorderThickness="1"
                             CornerRadius="9" Padding="17" Margin="0,0,0,15">
-                        <StackPanel>
-                            <TextBlock Text="Lập phiếu mượn theo cuốn" FontSize="18"
+                            <StackPanel>
+                                <TextBlock Text="Lập phiếu mượn theo cuốn" FontSize="18"
                                        FontWeight="SemiBold" Foreground="#35294D" Margin="0,0,0,13" />
-                            <TextBlock Text="Username độc giả (Reader đang hoạt động)" FontWeight="SemiBold" />
-                            <TextBox Text="{Binding ReaderUsername, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                     Height="36" Padding="9,6" Margin="0,5,0,10" MaxLength="100" />
-                            <TextBlock Text="Tìm cuốn còn sẵn (theo tên sách hoặc mã cuốn)" FontWeight="SemiBold" />
-                            <DockPanel LastChildFill="True" Margin="0,5,0,10">
-                                <Button Command="{Binding SearchAvailableCommand}" DockPanel.Dock="Right"
-                                        Content="TÌM CUỐN CÒN SẴN" Width="160" Height="36"
-                                        Background="#E5DCF2" BorderThickness="0" Margin="9,0,0,0" />
-                                <TextBox Text="{Binding CopyQuery, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                         Height="36" Padding="9,6" MaxLength="80" />
-                            </DockPanel>
-                            <DataGrid ItemsSource="{Binding AvailableCopies, Mode=OneWay}"
+                                <TextBlock Text="Tìm độc giả theo tên, username hoặc mã độc giả" FontWeight="SemiBold" />
+                                <TextBox x:Name="LoanReaderSearchInput"
+                                     Text="{Binding ReaderUsername, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                     Height="36" Padding="9,6" Margin="0,5,0,5" MaxLength="100"
+                                     ToolTip="Gõ tên/username/mã độc giả; chọn một gợi ý xổ xuống." />
+                                <Popup PlacementTarget="{Binding ElementName=LoanReaderSearchInput}"
+                                   Placement="Bottom" StaysOpen="False" AllowsTransparency="True"
+                                   PopupAnimation="Fade"
+                                   IsOpen="{Binding ShowReaderSuggestions, Mode=TwoWay}">
+                                    <Border Background="White" BorderBrush="#B9A5D9" BorderThickness="1"
+                                        CornerRadius="5" Width="550" MaxHeight="270"
+                                        SnapsToDevicePixels="True">
+                                        <ListBox ItemsSource="{Binding ReaderSuggestions, Mode=OneWay}"
+                                             SelectedItem="{Binding SelectedReader, Mode=TwoWay}"
+                                             BorderThickness="0" Background="White" MaxHeight="260"
+                                             ScrollViewer.VerticalScrollBarVisibility="Auto">
+                                            <ListBox.ItemTemplate>
+                                                <DataTemplate>
+                                                    <StackPanel Orientation="Horizontal" Margin="9,7">
+                                                        <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE77B;"
+                                                               Foreground="#6951A1" Margin="0,0,11,0" FontSize="17" />
+                                                        <TextBlock Text="{Binding Caption, Mode=OneWay}"
+                                                               TextTrimming="CharacterEllipsis" />
+                                                    </StackPanel>
+                                                </DataTemplate>
+                                            </ListBox.ItemTemplate>
+                                        </ListBox>
+                                    </Border>
+                                </Popup>
+                                <TextBlock Text="{Binding ReaderSearchMessage, Mode=OneWay}" Foreground="#746882"
+                                       FontSize="12" Margin="0,0,0,8" TextWrapping="Wrap" />
+                                <TextBlock Text="Tìm sách để mượn (gợi ý ngay khi gõ, không phân biệt dấu)"
+                                       FontWeight="SemiBold" />
+                                <TextBox x:Name="LoanBookSearchInput"
+                                     Text="{Binding CopyQuery, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                     Height="36" Padding="9,6" MaxLength="80" Margin="0,5,0,5"
+                                     ToolTip="Ví dụ: C#, Python, vuong; gợi ý chứa cả đầu sách chưa nhập cuốn." />
+                                <Popup PlacementTarget="{Binding ElementName=LoanBookSearchInput}"
+                                   Placement="Bottom" AllowsTransparency="True" StaysOpen="False"
+                                   PopupAnimation="Fade" IsOpen="{Binding ShowBookSuggestions, Mode=TwoWay}">
+                                    <Border Background="White" BorderBrush="#B9A5D9" BorderThickness="1"
+                                        CornerRadius="5" Width="630" MaxHeight="365"
+                                        SnapsToDevicePixels="True">
+                                        <ListBox ItemsSource="{Binding BookSuggestions, Mode=OneWay}"
+                                             SelectedItem="{Binding SelectedBookSuggestion, Mode=TwoWay}"
+                                             BorderThickness="0" Background="White" MaxHeight="350"
+                                             ScrollViewer.VerticalScrollBarVisibility="Auto">
+                                            <ListBox.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Grid Margin="8,7" MinHeight="55">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="42" />
+                                                            <ColumnDefinition Width="*" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <Border Grid.Column="0" Width="36" Height="48"
+                                                            Background="#EDE8F5" CornerRadius="3" VerticalAlignment="Top">
+                                                            <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE8F1;"
+                                                                   Foreground="#6951A1" FontSize="19"
+                                                                   HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                                        </Border>
+                                                        <StackPanel Grid.Column="1" Margin="8,0,4,0">
+                                                            <TextBlock Text="{Binding Title, Mode=OneWay}" FontWeight="SemiBold"
+                                                                   Foreground="#33274F" FontSize="14"
+                                                                   TextTrimming="CharacterEllipsis" />
+                                                            <TextBlock Text="{Binding Metadata, Mode=OneWay}" Foreground="#766B87"
+                                                                   FontSize="12" TextTrimming="CharacterEllipsis" />
+                                                            <TextBlock Text="{Binding AvailabilityText, Mode=OneWay}"
+                                                                   Foreground="#267965" FontSize="12" FontWeight="SemiBold" />
+                                                        </StackPanel>
+                                                    </Grid>
+                                                </DataTemplate>
+                                            </ListBox.ItemTemplate>
+                                        </ListBox>
+                                    </Border>
+                                </Popup>
+                                <TextBlock Text="{Binding CopySearchMessage, Mode=OneWay}" Foreground="#746882"
+                                       FontSize="12" Margin="0,0,0,8" TextWrapping="Wrap" />
+                                <DataGrid ItemsSource="{Binding AvailableCopies, Mode=OneWay}"
                                       SelectedItem="{Binding SelectedCopy, Mode=TwoWay}"
                                       AutoGenerateColumns="False" IsReadOnly="True"
                                       CanUserAddRows="False" CanUserDeleteRows="False" Height="188"
                                       SelectionMode="Single" Background="White"
                                       ScrollViewer.HorizontalScrollBarVisibility="Auto" Margin="0,0,0,13">
-                                <DataGrid.Columns>
-                                    <DataGridTextColumn Header="Mã cuốn" Binding="{Binding CopyCode, Mode=OneWay}" Width="160" MinWidth="120" />
-                                    <DataGridTextColumn Header="Tên sách" Binding="{Binding BookTitle, Mode=OneWay}" Width="2*" MinWidth="220" />
-                                    <DataGridTextColumn Header="Vị trí kệ" Binding="{Binding Shelf, Mode=OneWay}" Width="*" MinWidth="125" />
-                                </DataGrid.Columns>
-                            </DataGrid>
-                            <TextBlock Text="Chọn cuốn trong bảng hoặc nhập mã cuốn bên dưới." Foreground="#796A8E"
+                                    <DataGrid.Columns>
+                                        <DataGridTextColumn Header="Mã cuốn" Binding="{Binding CopyCode, Mode=OneWay}" Width="160" MinWidth="120" />
+                                        <DataGridTextColumn Header="Tên sách" Binding="{Binding BookTitle, Mode=OneWay}" Width="2*" MinWidth="220" />
+                                        <DataGridTextColumn Header="Vị trí kệ" Binding="{Binding Shelf, Mode=OneWay}" Width="*" MinWidth="125" />
+                                    </DataGrid.Columns>
+                                </DataGrid>
+                                <TextBlock Text="Chọn cuốn trong bảng hoặc nhập mã cuốn bên dưới." Foreground="#796A8E"
                                        FontSize="12" Margin="0,0,0,9" />
-                            <Grid Margin="0,0,0,12">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="2*" />
-                                    <ColumnDefinition Width="13" />
-                                    <ColumnDefinition Width="*" />
-                                </Grid.ColumnDefinitions>
-                                <StackPanel Grid.Column="0">
-                                    <TextBlock Text="Mã cuốn" FontWeight="SemiBold" />
-                                    <TextBox Text="{Binding CopyCode, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                <Grid Margin="0,0,0,12">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="2*" />
+                                        <ColumnDefinition Width="13" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0">
+                                        <TextBlock Text="Mã cuốn" FontWeight="SemiBold" />
+                                        <TextBox Text="{Binding CopyCode, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                              Height="36" Padding="9,6" Margin="0,5,0,0" MaxLength="60" />
-                                </StackPanel>
-                                <StackPanel Grid.Column="2">
-                                    <TextBlock Text="Số ngày mượn" FontWeight="SemiBold" />
-                                    <TextBox Text="{Binding LoanDays, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="2">
+                                        <TextBlock Text="Số ngày mượn" FontWeight="SemiBold" />
+                                        <TextBox Text="{Binding LoanDays, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                              Height="36" Padding="9,6" Margin="0,5,0,0" MaxLength="3" />
-                                </StackPanel>
-                            </Grid>
-                            <Button Command="{Binding CheckoutCommand}" Content="TẠO PHIẾU MƯỢN"
+                                    </StackPanel>
+                                </Grid>
+                                <Button Command="{Binding CheckoutCommand}" Content="TẠO PHIẾU MƯỢN"
                                     Background="#287C67" Foreground="White" BorderThickness="0"
                                     Height="42" HorizontalAlignment="Left" Width="200" />
-                            <TextBlock Text="Giới hạn cuốn và ngày mượn lấy từ hạng độc giả; API kiểm tra lại trước khi lưu."
+                                <TextBlock Text="Giới hạn cuốn và ngày mượn lấy từ hạng độc giả; API kiểm tra lại trước khi lưu."
                                        TextWrapping="Wrap" Foreground="#796A8E" FontSize="12"
                                        Margin="0,12,0,0" />
-                        </StackPanel>
-                    </Border>
-                </StackPanel>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
 
-                <Border Background="White" BorderBrush="#E6DFF1" BorderThickness="1"
+                    <Border Background="White" BorderBrush="#E6DFF1" BorderThickness="1"
                         CornerRadius="9" Padding="17">
-                    <StackPanel>
-                        <TextBlock Text="Phiếu mượn / lịch sử trả" FontSize="18" FontWeight="SemiBold"
+                        <StackPanel>
+                            <TextBlock Text="Phiếu mượn / lịch sử trả" FontSize="18" FontWeight="SemiBold"
                                    Foreground="#35294D" Margin="0,0,0,5" />
-                        <TextBlock Text="Reader chỉ thấy phiếu của mình. Staff/Admin xem tối đa 100 lượt gần nhất."
+                            <TextBlock Text="Reader chỉ thấy phiếu của mình. Staff/Admin xem tối đa 100 lượt gần nhất."
                                    Foreground="#796A8E" FontSize="12" Margin="0,0,0,12" />
-                        <DataGrid ItemsSource="{Binding Loans, Mode=OneWay}"
+                            <DataGrid ItemsSource="{Binding Loans, Mode=OneWay}"
                                   SelectedItem="{Binding SelectedLoan, Mode=TwoWay}"
                                   AutoGenerateColumns="False" IsReadOnly="True" Height="340"
                                   CanUserAddRows="False" CanUserDeleteRows="False"
                                   SelectionMode="Single" Background="White"
                                   ScrollViewer.HorizontalScrollBarVisibility="Auto">
-                            <DataGrid.Columns>
-                                <DataGridTextColumn Header="Độc giả" Binding="{Binding ReaderUsername, Mode=OneWay}" Width="115" MinWidth="105" />
-                                <DataGridTextColumn Header="Tên sách" Binding="{Binding BookTitle, Mode=OneWay}" Width="2*" MinWidth="220" />
-                                <DataGridTextColumn Header="Mã cuốn" Binding="{Binding CopyCode, Mode=OneWay}" Width="125" MinWidth="110" />
-                                <DataGridTextColumn Header="Mượn lúc" Binding="{Binding BorrowedAt, Mode=OneWay}" Width="158" MinWidth="145" />
-                                <DataGridTextColumn Header="Hạn trả" Binding="{Binding DueAt, Mode=OneWay}" Width="158" MinWidth="145" />
-                                <DataGridTextColumn Header="Đã trả lúc" Binding="{Binding ReturnedAt, Mode=OneWay}" Width="158" MinWidth="145" />
-                                <DataGridTextColumn Header="Trạng thái" Binding="{Binding Status, Mode=OneWay}" Width="95" MinWidth="90" />
-                            </DataGrid.Columns>
-                        </DataGrid>
-                        <StackPanel Visibility="{Binding CanManage, Converter={StaticResource BoolVisibility}}">
-                            <TextBlock Text="Chọn một phiếu chưa trả rồi nhấn nút dưới để ghi nhận trả."
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="Độc giả" Binding="{Binding ReaderUsername, Mode=OneWay}" Width="115" MinWidth="105" />
+                                    <DataGridTextColumn Header="Tên sách" Binding="{Binding BookTitle, Mode=OneWay}" Width="2*" MinWidth="220" />
+                                    <DataGridTextColumn Header="Mã cuốn" Binding="{Binding CopyCode, Mode=OneWay}" Width="125" MinWidth="110" />
+                                    <DataGridTextColumn Header="Mượn lúc" Binding="{Binding BorrowedAt, Mode=OneWay}" Width="158" MinWidth="145" />
+                                    <DataGridTextColumn Header="Hạn trả" Binding="{Binding DueAt, Mode=OneWay}" Width="158" MinWidth="145" />
+                                    <DataGridTextColumn Header="Đã trả lúc" Binding="{Binding ReturnedAt, Mode=OneWay}" Width="158" MinWidth="145" />
+                                    <DataGridTextColumn Header="Trạng thái" Binding="{Binding Status, Mode=OneWay}" Width="95" MinWidth="90" />
+                                </DataGrid.Columns>
+                            </DataGrid>
+                            <StackPanel Visibility="{Binding CanManage, Converter={StaticResource BoolVisibility}}">
+                                <TextBlock Text="Chọn một phiếu chưa trả rồi nhấn nút dưới để ghi nhận trả."
                                        Foreground="#796A8E" Margin="0,12,0,8" />
-                            <Button Command="{Binding ReturnCommand}" Height="40" Width="205"
+                                <Button Command="{Binding ReturnCommand}" Height="40" Width="205"
                                     Content="GHI NHẬN TRẢ CUỐN" HorizontalAlignment="Left"
                                     Background="#6951A1" Foreground="White" BorderThickness="0" />
+                            </StackPanel>
                         </StackPanel>
-                    </StackPanel>
-                </Border>
-            </StackPanel>
-        </DataTemplate>
+                    </Border>
+                </StackPanel>
+            </DataTemplate>
 
-        <Style x:Key="SideButton" TargetType="Button">
-            <Setter Property="Height" Value="45" />
-            <Setter Property="Margin" Value="0,4,0,4" />
-            <Setter Property="Padding" Value="15,0" />
-            <Setter Property="Background" Value="#514372" />
-            <Setter Property="Foreground" Value="White" />
-            <Setter Property="BorderThickness" Value="0" />
-            <Setter Property="HorizontalContentAlignment" Value="Left" />
-            <Setter Property="FontWeight" Value="SemiBold" />
-            <Setter Property="Cursor" Value="Hand" />
-            <Style.Triggers>
-                <Trigger Property="IsMouseOver" Value="True">
-                    <Setter Property="Background" Value="#775AA0" />
-                </Trigger>
-            </Style.Triggers>
-        </Style>
+            <!-- STEP 58: ONE dedicated view for multi-title loan requests; uses existing shell + VM. -->
+            <DataTemplate DataType="{x:Type vm:BorrowRequestViewModel}">
+                <StackPanel Margin="0,0,0,24">
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                        <TextBlock Text="&#xE8F1;" FontFamily="Segoe MDL2 Assets"
+                               Foreground="#6951A1" FontSize="25" Margin="0,0,12,0" />
+                        <TextBlock Text="ĐƠN YÊU CẦU MƯỢN SÁCH" FontSize="26"
+                               Foreground="#35294D" FontWeight="Bold" />
+                    </StackPanel>
+                    <TextBlock Text="Chọn nhiều đầu sách → gửi yêu cầu → chờ Staff duyệt. Đây chưa phải phiếu mượn thực tế."
+                           TextWrapping="Wrap" Foreground="#746882" FontSize="13" Margin="0,0,0,13" />
+                    <Border Background="#F0EBFA" CornerRadius="8" Padding="13" Margin="0,0,0,14">
+                        <DockPanel>
+                            <TextBlock Text="&#xE946;" FontFamily="Segoe MDL2 Assets" Foreground="#6951A1"
+                                   FontSize="17" DockPanel.Dock="Left" Margin="0,0,12,0" />
+                            <TextBlock Text="{Binding Message, Mode=OneWay}" TextWrapping="Wrap"
+                                   Foreground="#45375F" />
+                        </DockPanel>
+                    </Border>
+                    <Border Visibility="{Binding IsReader, Converter={StaticResource BoolVisibility}}"
+                        Background="White" CornerRadius="10" BorderThickness="1"
+                        BorderBrush="#E2DAEE" Padding="19" Margin="0,0,0,16">
+                        <StackPanel>
+                            <TextBlock Text="Tạo đơn mượn nhiều sách" FontSize="19" FontWeight="Bold"
+                                   Foreground="#35294D" Margin="0,0,0,12" />
+                            <TextBlock Text="DANH MỤC SÁCH ĐỂ ĐẶT MƯỢN"
+                                   FontWeight="Bold" FontSize="16" Foreground="#35294D" />
+                            <TextBlock Text="Sách sẽ hiện ngay bên dưới. Gõ tên/ISBN/tác giả để lọc, không phân biệt dấu và chữ hoa."
+                                   TextWrapping="Wrap" Foreground="#746882" Margin="0,4,0,2" />
+                            <TextBox Text="{Binding SearchText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                 Height="38" Padding="10,7" Margin="0,6,0,0" MaxLength="80" />
+                            <TextBlock Text="{Binding CatalogStatus, Mode=OneWay}"
+                                   Foreground="#554174" TextWrapping="Wrap"
+                                   Margin="0,7,0,4" FontSize="12" />
+                            <!-- First 25 visible book titles LOAD AUTOMATICALLY on entering this page;
+                             typing filters the same list without needing any physical copies. -->
+                            <Border Visibility="{Binding ShowSuggestions, Converter={StaticResource BoolVisibility}}"
+                                BorderBrush="#B8A5D9" BorderThickness="1" Background="White"
+                                Margin="0,1,0,9" Padding="1">
+                                <ListBox ItemsSource="{Binding Suggestions, Mode=OneWay}"
+                                     SelectedItem="{Binding SelectedSuggestion, Mode=TwoWay}"
+                                     MaxHeight="330" Background="White" BorderThickness="0"
+                                     ScrollViewer.VerticalScrollBarVisibility="Auto">
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate>
+                                            <StackPanel Margin="8,5">
+                                                <TextBlock Text="{Binding Title, Mode=OneWay}" FontWeight="SemiBold"
+                                                       Foreground="#382C50" TextWrapping="Wrap" />
+                                                <TextBlock Text="{Binding Metadata, Mode=OneWay}"
+                                                       FontSize="12" Foreground="#776887" />
+                                                <TextBlock Text="{Binding AvailabilityText, Mode=OneWay}"
+                                                       FontSize="12" Foreground="#236E5B" />
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                            </Border>
+                            <Grid Margin="0,12,0,10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="170" />
+                                    <ColumnDefinition Width="15" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0">
+                                    <TextBlock Text="Số ngày muốn mượn" FontWeight="SemiBold" />
+                                    <TextBox Text="{Binding DaysText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                         Height="36" Padding="8,6" Margin="0,5,0,0" MaxLength="3" />
+                                </StackPanel>
+                                <Button Grid.Column="2" Command="{Binding AddBookCommand}" Content="+ THÊM SÁCH VÀO ĐƠN"
+                                    Height="37" HorizontalAlignment="Left" VerticalAlignment="Bottom"
+                                    Width="210" Background="#6951A1" Foreground="White" BorderThickness="0" />
+                            </Grid>
+                            <TextBlock Text="Các đầu sách đã chọn (tối đa 5 đầu sách khác nhau)"
+                                   FontWeight="SemiBold" Foreground="#45375F" Margin="0,8,0,8" />
+                            <DataGrid ItemsSource="{Binding Cart, Mode=OneWay}"
+                                  SelectedItem="{Binding SelectedCartItem, Mode=TwoWay}"
+                                  IsReadOnly="True" AutoGenerateColumns="False" Height="180"
+                                  CanUserAddRows="False" CanUserDeleteRows="False"
+                                  ScrollViewer.HorizontalScrollBarVisibility="Auto">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="Tên sách" Binding="{Binding Title, Mode=OneWay}"
+                                                    Width="2*" MinWidth="235" />
+                                    <DataGridTextColumn Header="Tác giả" Binding="{Binding Authors, Mode=OneWay}"
+                                                    Width="*" MinWidth="140" />
+                                    <DataGridTextColumn Header="Số ngày" Binding="{Binding RequestedDays, Mode=OneWay}"
+                                                    Width="80" />
+                                    <DataGridTextColumn Header="Tình trạng kho" Binding="{Binding StockText, Mode=OneWay}"
+                                                    Width="170" />
+                                </DataGrid.Columns>
+                            </DataGrid>
+                            <Button Command="{Binding RemoveBookCommand}" Content="BỎ SÁCH ĐÃ CHỌN KHỎI ĐƠN"
+                                Height="34" Width="235" Margin="0,8,0,12"
+                                HorizontalAlignment="Left" Background="#EBE7F3"
+                                Foreground="#554174" BorderThickness="0" />
+                            <TextBlock Text="Ghi chú cho nhân viên (không bắt buộc)" FontWeight="SemiBold" />
+                            <TextBox Text="{Binding Note, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                 Height="65" TextWrapping="Wrap" AcceptsReturn="True"
+                                 VerticalScrollBarVisibility="Auto" MaxLength="500" Padding="10,7"
+                                 Margin="0,6,0,14" />
+                            <Button Command="{Binding SubmitCommand}" Content="GỬI ĐƠN MƯỢN ĐẾN NHÂN VIÊN"
+                                Height="43" Width="280" HorizontalAlignment="Left"
+                                Background="#26765E" Foreground="White" BorderThickness="0" />
+                            <TextBlock Text="Lưu ý: gửi đơn không giữ chỗ. Nhân viên sẽ kiểm tra cuốn thực tế và duyệt sau."
+                                   Foreground="#746882" FontSize="12" TextWrapping="Wrap"
+                                   Margin="0,12,0,0" />
+                        </StackPanel>
+                    </Border>
+                    <Border Background="White" CornerRadius="10" BorderThickness="1"
+                        BorderBrush="#E2DAEE" Padding="19">
+                        <StackPanel>
+                            <DockPanel Margin="0,0,0,12">
+                                <TextBlock Text="Đơn mượn đã gửi / đang chờ duyệt" FontSize="18"
+                                       FontWeight="Bold" Foreground="#35294D" />
+                                <Button Command="{Binding RefreshCommand}" Content="LÀM MỚI"
+                                    DockPanel.Dock="Right" Width="100" Height="35"
+                                    Background="#6951A1" Foreground="White" BorderThickness="0"
+                                    HorizontalAlignment="Right" />
+                            </DockPanel>
+                            <DataGrid ItemsSource="{Binding Requests, Mode=OneWay}"
+                                  SelectedItem="{Binding SelectedRequest, Mode=TwoWay}"
+                                  IsReadOnly="True" AutoGenerateColumns="False" Height="280"
+                                  CanUserAddRows="False" CanUserDeleteRows="False"
+                                  ScrollViewer.HorizontalScrollBarVisibility="Auto">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="Mã đơn" Binding="{Binding RequestCode, Mode=OneWay}"
+                                                    Width="185" MinWidth="160" />
+                                    <DataGridTextColumn Header="Reader" Binding="{Binding ReaderUsername, Mode=OneWay}"
+                                                    Width="120" />
+                                    <DataGridTextColumn Header="Ngày gửi" Binding="{Binding RequestedAt, Mode=OneWay}"
+                                                    Width="155" />
+                                    <DataGridTextColumn Header="Trạng thái" Binding="{Binding Status, Mode=OneWay}"
+                                                    Width="105" />
+                                    <DataGridTextColumn Header="Số đầu sách" Binding="{Binding ItemCount, Mode=OneWay}"
+                                                    Width="90" />
+                                    <DataGridTextColumn Header="Các sách trong đơn" Binding="{Binding ItemsSummary, Mode=OneWay}"
+                                                    Width="2*" MinWidth="260" />
+                                </DataGrid.Columns>
+                            </DataGrid>
+                            <Button Visibility="{Binding IsReader, Converter={StaticResource BoolVisibility}}"
+                                Command="{Binding CancelRequestCommand}" Content="HỦY ĐƠN ĐANG CHỌN (CHỈ KHI CHỜ DUYỆT)"
+                                Height="38" HorizontalAlignment="Left" Width="330"
+                                Margin="0,13,0,0" Background="#B35B5B"
+                                Foreground="White" BorderThickness="0" />
+                            <TextBlock Visibility="{Binding CanManage, Converter={StaticResource BoolVisibility}}"
+                                   Text="Đây là danh sách yêu cầu. Duyệt/từ chối và giao cuốn thực tế sẽ triển khai ở bước kế tiếp."
+                                   TextWrapping="Wrap" Foreground="#776887" Margin="0,12,0,0" />
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+            </DataTemplate>
+
+            <Style x:Key="SideButton" TargetType="Button">
+                <Setter Property="Height" Value="45" />
+                <Setter Property="Margin" Value="0,4,0,4" />
+                <Setter Property="Padding" Value="15,0" />
+                <Setter Property="Background" Value="#514372" />
+                <Setter Property="Foreground" Value="White" />
+                <Setter Property="BorderThickness" Value="0" />
+                <Setter Property="HorizontalContentAlignment" Value="Left" />
+                <Setter Property="FontWeight" Value="SemiBold" />
+                <Setter Property="Cursor" Value="Hand" />
+                <Style.Triggers>
+                    <Trigger Property="IsMouseOver" Value="True">
+                        <Setter Property="Background" Value="#775AA0" />
+                    </Trigger>
+                </Style.Triggers>
+            </Style>
+        </ResourceDictionary>
     </Window.Resources>
     <Grid>
         <Grid.ColumnDefinitions>
@@ -387,6 +637,9 @@
                                 <TextBlock Text="Hồ sơ của tôi" />
                             </StackPanel>
                         </Button>
+
+                        <Button Style="{StaticResource SideButton}" Content="ĐẶT ĐƠN MƯỢN SÁCH"
+                                Command="{Binding RequestsCommand}" ToolTip="Xem danh mục, chọn 1-5 đầu sách và gửi yêu cầu" />
                         <Button Style="{StaticResource SideButton}" Content="Sách đang mượn / lịch sử"
                                 Command="{Binding LoansCommand}" />
                         <Button Style="{StaticResource SideButton}" Content="Gia hạn"
@@ -398,8 +651,13 @@
                         <TextBlock Text="NGHIỆP VỤ" Foreground="#BAABD6" Margin="12,24,0,8" FontSize="11" />
                         <Button Style="{StaticResource SideButton}" Content="Quản lý độc giả"
                                 Command="{Binding ReaderCommand}" />
-                        <Button Style="{StaticResource SideButton}" Content="Mượn / trả sách"
-                                Command="{Binding LoansCommand}" />
+
+                        <Button Style="{StaticResource SideButton}" Content="★ ĐƠN MƯỢN READER GỬI"
+                                Command="{Binding RequestsCommand}"
+                                ToolTip="Danh sách yêu cầu. Duyệt/giao cuốn sẽ được bổ sung ở bước sau." />
+                        <Button Style="{StaticResource SideButton}" Content="Nhận trả / lập phiếu trực tiếp (cũ)"
+                                Command="{Binding LoansCommand}"
+                                ToolTip="Đây là nghiệp vụ trực tiếp theo mã cuốn, KHÔNG phải màn hình duyệt đơn Reader." />
                     </StackPanel>
                     <StackPanel Visibility="{Binding IsAdmin, Converter={StaticResource BoolVisibility}}">
                         <TextBlock Text="QUẢN TRỊ" Foreground="#BAABD6" Margin="12,24,0,8" FontSize="11" />
@@ -445,5 +703,6 @@
                 </Grid>
             </ScrollViewer>
         </DockPanel>
+
     </Grid>
 </Window>

@@ -64,11 +64,67 @@ namespace QuanLyThuVien.Services
             { return new LoanCopyListResult { Message = "Không thể tải danh sách cuốn còn sẵn." }; }
         }
 
+        // Autocomplete Reader: returns only username, name and library reader code.
+        public async Task<LoanReaderListResult> GetReaderSuggestionsAsync(string token, string query)
+        {
+            if (string.IsNullOrWhiteSpace(query)) return new LoanReaderListResult { IsSuccess = true };
+            string url = BaseUrl + "/reader-suggestions?query=" + Uri.EscapeDataString(query.Trim());
+            try
+            {
+                using (var request = NewRequest(HttpMethod.Get, url, token))
+                using (var response = await Http.SendAsync(request))
+                {
+                    string body = await response.Content.ReadAsStringAsync();
+                    if (!response.IsSuccessStatusCode)
+                        return new LoanReaderListResult { Message = Error(body, response.StatusCode) };
+                    var result = Parse<LoanReaderListResponse>(body);
+                    return new LoanReaderListResult
+                    {
+                        IsSuccess = true,
+                        Readers = result == null || result.Readers == null
+                            ? new List<LoanReaderSuggestion>() : result.Readers
+                    };
+                }
+            }
+            catch (Exception ex) when (ex is HttpRequestException || ex is TaskCanceledException ||
+                                       ex is SerializationException || ex is InvalidOperationException)
+            { return new LoanReaderListResult { Message = "Không thể tải gợi ý độc giả." }; }
+        }
+
+        // Catalogue suggestions include titles with zero copies; no DB credentials in WPF.
+        public async Task<LoanBookListResult> GetBookSuggestionsAsync(string token, string query)
+        {
+            if (string.IsNullOrWhiteSpace(query)) return new LoanBookListResult { IsSuccess = true };
+            string url = BaseUrl + "/book-suggestions?query=" + Uri.EscapeDataString(query.Trim());
+            try
+            {
+                using (var request = NewRequest(HttpMethod.Get, url, token))
+                using (var response = await Http.SendAsync(request))
+                {
+                    string body = await response.Content.ReadAsStringAsync();
+                    if (!response.IsSuccessStatusCode)
+                        return new LoanBookListResult { Message = Error(body, response.StatusCode) };
+                    var result = Parse<LoanBookListResponse>(body);
+                    return new LoanBookListResult
+                    {
+                        IsSuccess = true,
+                        Books = result == null || result.Books == null
+                            ? new List<LoanBookSuggestion>() : result.Books
+                    };
+                }
+            }
+            catch (Exception ex) when (ex is HttpRequestException || ex is TaskCanceledException ||
+                                       ex is SerializationException || ex is InvalidOperationException)
+            { return new LoanBookListResult { Message = "Không tải được gợi ý đầu sách." }; }
+        }
+
         public Task<LoanActionResult> CheckoutAsync(string token, string readerUsername, string copyCode, int loanDays)
         {
             return SendActionAsync(BaseUrl + "/checkout", token, Serialize(new CheckoutRequest
             {
-                ReaderUsername = readerUsername, CopyCode = copyCode, LoanDays = loanDays
+                ReaderUsername = readerUsername,
+                CopyCode = copyCode,
+                LoanDays = loanDays
             }));
         }
 
@@ -102,6 +158,70 @@ namespace QuanLyThuVien.Services
             catch (Exception ex) when (ex is HttpRequestException || ex is TaskCanceledException ||
                                        ex is SerializationException || ex is InvalidOperationException)
             { return new LoanActionResult { Message = "API không phản hồi. Vui lòng thử lại." }; }
+        }
+
+
+        // Step58: requestable book titles (includes titles with zero available physical copies).
+        public async Task<LoanBookListResult> GetRequestBookSuggestionsAsync(string token, string query)
+        {
+            string url = "http://127.0.0.1:5082/api/borrow-requests/books?query=" +
+                         Uri.EscapeDataString((query ?? "").Trim());
+            try
+            {
+                using (var req = NewRequest(HttpMethod.Get, url, token))
+                using (var response = await Http.SendAsync(req))
+                {
+                    var json = await response.Content.ReadAsStringAsync();
+                    if (!response.IsSuccessStatusCode)
+                        return new LoanBookListResult { Message = Error(json, response.StatusCode) };
+                    var body = Parse<LoanBookListResponse>(json);
+                    return new LoanBookListResult
+                    {
+                        IsSuccess = true,
+                        Books = body?.Books ?? new List<LoanBookSuggestion>()
+                    };
+                }
+            }
+            catch (Exception ex) when (ex is HttpRequestException || ex is TaskCanceledException ||
+                                       ex is SerializationException || ex is InvalidOperationException)
+            { return new LoanBookListResult { Message = "Không tải được gợi ý sách." }; }
+        }
+
+        public async Task<BorrowRequestListResult> GetBorrowRequestsAsync(string token)
+        {
+            try
+            {
+                using (var req = NewRequest(HttpMethod.Get,
+                           "http://127.0.0.1:5082/api/borrow-requests", token))
+                using (var response = await Http.SendAsync(req))
+                {
+                    var json = await response.Content.ReadAsStringAsync();
+                    if (!response.IsSuccessStatusCode)
+                        return new BorrowRequestListResult { Message = Error(json, response.StatusCode) };
+                    var body = Parse<BorrowRequestListResponse>(json);
+                    return new BorrowRequestListResult
+                    {
+                        IsSuccess = true,
+                        Requests = body?.Requests ?? new List<BorrowRequestSummary>()
+                    };
+                }
+            }
+            catch (Exception ex) when (ex is HttpRequestException || ex is TaskCanceledException ||
+                                       ex is SerializationException || ex is InvalidOperationException)
+            { return new BorrowRequestListResult { Message = "Không tải được đơn mượn." }; }
+        }
+
+        public Task<LoanActionResult> SubmitBorrowRequestAsync(string token,
+            List<BorrowRequestLine> items, string note)
+        {
+            return SendActionAsync("http://127.0.0.1:5082/api/borrow-requests", token,
+                Serialize(new NewBorrowRequestDto { Items = items, Note = note }));
+        }
+
+        public Task<LoanActionResult> CancelBorrowRequestAsync(string token, long requestId)
+        {
+            return SendActionAsync("http://127.0.0.1:5082/api/borrow-requests/" +
+                                   requestId + "/cancel", token, "{}");
         }
 
         private static HttpRequestMessage NewRequest(HttpMethod method, string url, string token)
@@ -138,6 +258,28 @@ namespace QuanLyThuVien.Services
                 : "Yêu cầu thất bại, HTTP " + (int)status + ".";
         }
 
+
+        [DataContract]
+        private sealed class BorrowRequestListResponse
+        {
+            [DataMember(Name = "requests")] public List<BorrowRequestSummary> Requests { get; set; }
+        }
+        [DataContract]
+        private sealed class NewBorrowRequestDto
+        {
+            [DataMember(Name = "items")] public List<BorrowRequestLine> Items { get; set; }
+            [DataMember(Name = "note")] public string Note { get; set; }
+        }
+        [DataContract]
+        private sealed class LoanBookListResponse
+        {
+            [DataMember(Name = "books")] public List<LoanBookSuggestion> Books { get; set; }
+        }
+        [DataContract]
+        private sealed class LoanReaderListResponse
+        {
+            [DataMember(Name = "readers")] public List<LoanReaderSuggestion> Readers { get; set; }
+        }
         [DataContract]
         private sealed class LoanListResponse
         {
@@ -185,6 +327,44 @@ namespace QuanLyThuVien.Services
         [DataMember(Name = "bookTitle")] public string BookTitle { get; set; }
         [DataMember(Name = "shelf")] public string Shelf { get; set; }
     }
+    [DataContract]
+    public sealed class LoanReaderSuggestion
+    {
+        [DataMember(Name = "username")] public string Username { get; set; }
+        [DataMember(Name = "fullName")] public string FullName { get; set; }
+        [DataMember(Name = "readerCode")] public string ReaderCode { get; set; }
+        // User-facing display only; sending checkout uses Username, never FullName.
+        public string Caption => (FullName ?? "") + "  •  @" + (Username ?? "") + "  •  " + (ReaderCode ?? "");
+    }
+    [DataContract]
+    public sealed class LoanBookSuggestion
+    {
+        [DataMember(Name = "bookId")] public long BookId { get; set; }
+        [DataMember(Name = "title")] public string Title { get; set; }
+        [DataMember(Name = "isbn")] public string Isbn { get; set; }
+        [DataMember(Name = "authors")] public string Authors { get; set; }
+        [DataMember(Name = "categories")] public string Categories { get; set; }
+        [DataMember(Name = "publisher")] public string Publisher { get; set; }
+        [DataMember(Name = "availableCopies")] public long AvailableCopies { get; set; }
+        [DataMember(Name = "firstAvailableCopyCode")] public string FirstAvailableCopyCode { get; set; }
+        public string Metadata => string.IsNullOrWhiteSpace(Authors) ? "Chưa có tác giả" : Authors;
+        public string AvailabilityText => AvailableCopies > 0
+            ? "Còn " + AvailableCopies + " cuốn có thể mượn"
+            : "Chưa có cuốn để mượn";
+    }
+    public sealed class LoanBookListResult
+    {
+        public bool IsSuccess { get; set; }
+        public string Message { get; set; }
+        public List<LoanBookSuggestion> Books { get; set; } = new List<LoanBookSuggestion>();
+    }
+    public sealed class LoanReaderListResult
+    {
+        public bool IsSuccess { get; set; }
+        public string Message { get; set; }
+        public List<LoanReaderSuggestion> Readers { get; set; } = new List<LoanReaderSuggestion>();
+    }
+
     public sealed class LoanListResult
     {
         public bool IsSuccess { get; set; }
@@ -202,4 +382,42 @@ namespace QuanLyThuVien.Services
         public bool IsSuccess { get; set; }
         public string Message { get; set; }
     }
+
+    // Requesting a title is not a checkout. All DTOs are kept in the EXISTING LoanApiClient.cs.
+    [DataContract]
+    public sealed class BorrowRequestLine
+    {
+        [DataMember(Name = "bookId")] public long BookId { get; set; }
+        [DataMember(Name = "requestedDays")] public int RequestedDays { get; set; }
+    }
+    public sealed class BorrowRequestCartItem
+    {
+        public long BookId { get; set; }
+        public string Title { get; set; }
+        public string Authors { get; set; }
+        public long AvailableCopies { get; set; }
+        public int RequestedDays { get; set; }
+        public string StockText => AvailableCopies > 0
+            ? "Hiện còn " + AvailableCopies + " cuốn" : "Chưa có cuốn trong kho";
+    }
+    [DataContract]
+    public sealed class BorrowRequestSummary
+    {
+        [DataMember(Name = "requestId")] public long RequestId { get; set; }
+        [DataMember(Name = "requestCode")] public string RequestCode { get; set; }
+        [DataMember(Name = "readerUsername")] public string ReaderUsername { get; set; }
+        [DataMember(Name = "status")] public string Status { get; set; }
+        [DataMember(Name = "requestedAt")] public string RequestedAt { get; set; }
+        [DataMember(Name = "note")] public string Note { get; set; }
+        [DataMember(Name = "itemCount")] public long ItemCount { get; set; }
+        [DataMember(Name = "itemsSummary")] public string ItemsSummary { get; set; }
+        public bool CanCancel => Status == "pending";
+    }
+    public sealed class BorrowRequestListResult
+    {
+        public bool IsSuccess { get; set; }
+        public string Message { get; set; }
+        public List<BorrowRequestSummary> Requests { get; set; } = new List<BorrowRequestSummary>();
+    }
+
 }
