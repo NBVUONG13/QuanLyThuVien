@@ -4,11 +4,11 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              mc:Ignorable="d"
-             d:DesignHeight="650" d:DesignWidth="900">
+             d:DesignHeight="760" d:DesignWidth="900">
     <Grid Background="#F3F6FB">
         <ScrollViewer VerticalScrollBarVisibility="Auto"
                       HorizontalScrollBarVisibility="Disabled">
-            <Grid MinHeight="555">
+            <Grid MinHeight="710">
                 <Border Width="440" Padding="30" Margin="16,18"
                         HorizontalAlignment="Center" VerticalAlignment="Center"
                         Background="White" CornerRadius="14"
@@ -20,7 +20,7 @@
                         <TextBlock Text="Đăng ký tài khoản"
                                    FontSize="24" FontWeight="SemiBold" Foreground="#172033"
                                    HorizontalAlignment="Center" Margin="0,8,0,5"/>
-                        <TextBlock Text="Xin chào độc giả mới"
+                        <TextBlock Text="Chỉ dành cho độc giả (Reader)"
                                    FontSize="12" Foreground="#64748B"
                                    HorizontalAlignment="Center"/>
 
@@ -36,25 +36,44 @@
                                  VerticalContentAlignment="Center" BorderBrush="#CBD5E1"
                                  TabIndex="1"/>
 
+                        <TextBlock Text="Số điện thoại" Margin="0,12,0,6"
+                                   FontSize="13" FontWeight="SemiBold" Foreground="#334155"/>
+                        <TextBox x:Name="txtRegisterPhone" Height="40" Padding="10,0"
+                                 VerticalContentAlignment="Center" BorderBrush="#CBD5E1"
+                                 ToolTip="Số di động Việt Nam, ví dụ 09xxxxxxxx"
+                                 TabIndex="2"/>
+
                         <TextBlock Text="Mật khẩu" Margin="0,12,0,6"
                                    FontSize="13" FontWeight="SemiBold" Foreground="#334155"/>
                         <PasswordBox x:Name="pwdRegisterPassword" Height="40" Padding="10,0"
                                      VerticalContentAlignment="Center" BorderBrush="#CBD5E1"
-                                     TabIndex="2"/>
+                                     TabIndex="3"/>
 
                         <TextBlock Text="Nhập lại mật khẩu" Margin="0,12,0,6"
                                    FontSize="13" FontWeight="SemiBold" Foreground="#334155"/>
                         <PasswordBox x:Name="pwdConfirmPassword" Height="40" Padding="10,0"
                                      VerticalContentAlignment="Center" BorderBrush="#CBD5E1"
-                                     TabIndex="3"/>
+                                     TabIndex="4"/>
 
                         <Button x:Name="btnRegister" Content="TẠO TÀI KHOẢN"
                                 IsEnabled="False" Height="44" Margin="0,20,0,0"
                                 FontSize="14" FontWeight="SemiBold"
                                 Background="#2563EB" Foreground="White"
-                                BorderThickness="0" TabIndex="4"/>
+                                BorderThickness="0" TabIndex="5"/>
+
+                        <TextBlock Text="Mã xác minh (OTP)" Margin="0,20,0,6"
+                                   FontSize="13" FontWeight="SemiBold" Foreground="#334155"/>
+                        <TextBox x:Name="txtRegisterOtp" Height="40" Padding="10,0"
+                                 VerticalContentAlignment="Center" BorderBrush="#CBD5E1"
+                                 MaxLength="6" IsEnabled="False" TabIndex="6"/>
+                        <Button x:Name="btnConfirmOtp" Content="XÁC NHẬN MÃ OTP"
+                                IsEnabled="False" Height="42" Margin="0,12,0,0"
+                                FontSize="13" FontWeight="SemiBold"
+                                Background="#0F766E" Foreground="White"
+                                BorderThickness="0" TabIndex="7"/>
+
                         <TextBlock x:Name="txtRegisterMessage"
-                                   Text="Xin trân trọng được đồng hành cùng quý độc giả"
+                                   Text="Giao diện đã sẵn sàng. Bước tiếp theo sẽ nối đăng ký và OTP với API."
                                    Margin="0,10,0,0" FontSize="11" Foreground="#64748B"
                                    TextWrapping="Wrap" TextAlignment="Center"/>
                     </StackPanel>
