@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
+using System.Text;
 using System.Collections.ObjectModel;
 using System.Linq;
 using System.Threading.Tasks;
@@ -18,6 +20,11 @@ namespace QuanLyThuVien.ViewModels
         private readonly BookDetailApiClient _detailApi = new BookDetailApiClient();
         private readonly ReferenceCatalogApiClient _references = new ReferenceCatalogApiClient();
         private readonly List<CatalogBook> _searchResults = new List<CatalogBook>();
+        // The real catalog is fetched by the existing API and cached for local suggestions.
+        // Current API returns at most 100 books. No fake book rows are added.
+        private readonly List<CatalogBook> _allBooks = new List<CatalogBook>();
+        private CatalogBook _selectedSearchSuggestion;
+        private bool _showSearchSuggestions, _suppressSearchSuggestions;
 
         private string _query = "", _message = "", _copyCode = "", _shelf = "";
         private string _authorName = "", _authorDetail = "", _publisherName = "", _publisherDetail = "", _categoryName = "";
@@ -57,6 +64,15 @@ namespace QuanLyThuVien.ViewModels
                 SelectedBook = selected;
                 await LoadDetailAsync();
             });
+            // Navigate to the EXISTING Reader request cart; do not create a real loan here.
+            BorrowBookCommand = new ActionCommand(_ =>
+            {
+                if (!IsReader || SelectedBook == null || Detail == null) return;
+                var book = SelectedBook;
+                DetailExpanded = false;
+                ShowSearchSuggestions = false;
+                BorrowBookRequested?.Invoke(book);
+            }, _ => IsReader && SelectedBook != null && Detail != null && !Busy);
             DetailCommand = new AsyncCommand(_ => LoadDetailAsync(), _ => SelectedBook != null);
             CloseDetailCommand = new ActionCommand(_ => DetailExpanded = false);
             AddCopyCommand = new AsyncCommand(_ => AddCopyAsync(), _ => CanManage && SelectedBook != null);
@@ -67,6 +83,30 @@ namespace QuanLyThuVien.ViewModels
         }
 
         public bool CanManage { get; }
+        public bool IsReader => !CanManage;
+        // MainViewModel subscribes once to navigate to its existing BorrowRequestViewModel.
+        public event Action<CatalogBook> BorrowBookRequested;
+        public ObservableCollection<CatalogBook> SearchSuggestions { get; } = new ObservableCollection<CatalogBook>();
+        public bool ShowSearchSuggestions
+        {
+            get => _showSearchSuggestions;
+            set => Set(ref _showSearchSuggestions, value);
+        }
+        public bool NoSearchSuggestions => SearchSuggestions.Count == 0;
+        public CatalogBook SelectedSearchSuggestion
+        {
+            get => _selectedSearchSuggestion;
+            set
+            {
+                if (!Set(ref _selectedSearchSuggestion, value) || value == null) return;
+                _suppressSearchSuggestions = true;
+                Query = value.Title;
+                _suppressSearchSuggestions = false;
+                ShowSearchSuggestions = false;
+                // Click suggestion => show this book's detailed information.
+                _ = OpenSuggestionAsync(value);
+            }
+        }
         public ObservableCollection<CatalogBook> Books { get; } = new ObservableCollection<CatalogBook>();
         public ObservableCollection<BookCopyDto> Copies { get; } = new ObservableCollection<BookCopyDto>();
         public ObservableCollection<ReferenceEntry> Authors { get; } = new ObservableCollection<ReferenceEntry>();
@@ -82,9 +122,24 @@ namespace QuanLyThuVien.ViewModels
         public bool DetailExpanded { get => _detailExpanded; set => Set(ref _detailExpanded, value); }
         public string DetailMessage { get => _detailMessage; private set => Set(ref _detailMessage, value); }
         public bool HasNoBooks => _booksLoaded && Books.Count == 0;
-        public string Query { get => _query; set => Set(ref _query, value); }
+        public string Query
+        {
+            get => _query;
+            set
+            {
+                if (Set(ref _query, value ?? "") && !_suppressSearchSuggestions)
+                    RefreshSearchSuggestions();
+            }
+        }
         public string Message { get => _message; private set => Set(ref _message, value); }
-        public bool Busy { get => _busy; private set => Set(ref _busy, value); }
+        public bool Busy
+        {
+            get => _busy;
+            private set
+            {
+                if (Set(ref _busy, value)) (BorrowBookCommand as ActionCommand)?.Refresh();
+            }
+        }
         public string CopyCode { get => _copyCode; set => Set(ref _copyCode, value); }
         public string Shelf { get => _shelf; set => Set(ref _shelf, value); }
         public string AuthorName { get => _authorName; set => Set(ref _authorName, value); }
@@ -126,6 +181,7 @@ namespace QuanLyThuVien.ViewModels
                 Copies.Clear();
                 (DetailCommand as AsyncCommand)?.Refresh();
                 (AddCopyCommand as AsyncCommand)?.Refresh();
+                (BorrowBookCommand as ActionCommand)?.Refresh();
             }
         }
         public BookDetailResult Detail
@@ -140,6 +196,7 @@ namespace QuanLyThuVien.ViewModels
                 Notify(nameof(DetailPublisher));
                 Notify(nameof(DetailPublicationYear));
                 Notify(nameof(DetailIsbn));
+                (BorrowBookCommand as ActionCommand)?.Refresh();
             }
         }
         public string DetailDescription => Display(Detail?.Description, "Chưa có mô tả.");
@@ -153,6 +210,7 @@ namespace QuanLyThuVien.ViewModels
             string.IsNullOrWhiteSpace(value) ? fallback : value;
 
 
+        public ICommand BorrowBookCommand { get; }
         public ICommand SearchCommand { get; }
         public ICommand ResetFiltersCommand { get; }
         public ICommand OpenBookCommand { get; }
@@ -178,18 +236,74 @@ namespace QuanLyThuVien.ViewModels
             if (!_referencesLoaded) await LoadReferencesAsync();
         }
 
+        // Normalise Vietnamese accents, including Đ/đ, for fast local suggestions.
+        private static string Fold(string value)
+        {
+            if (string.IsNullOrEmpty(value)) return "";
+            var chars = value.ToLowerInvariant().Replace('đ', 'd').Normalize(NormalizationForm.FormD);
+            var output = new StringBuilder(chars.Length);
+            foreach (var c in chars)
+                if (CharUnicodeInfo.GetUnicodeCategory(c) != UnicodeCategory.NonSpacingMark)
+                    output.Append(c);
+            return output.ToString().Normalize(NormalizationForm.FormC);
+        }
+
+        private static bool MatchesText(CatalogBook book, string normalized)
+        {
+            return Fold(book.Title).Contains(normalized) ||
+                Fold(book.Authors).Contains(normalized) ||
+                Fold(book.Isbn).Contains(normalized);
+        }
+
+        private void RefreshSearchSuggestions()
+        {
+            SearchSuggestions.Clear();
+            var key = Fold((Query ?? "").Trim());
+            if (key.Length == 0 || !_booksLoaded)
+            {
+                ShowSearchSuggestions = false;
+                Notify(nameof(NoSearchSuggestions));
+                return;
+            }
+            foreach (var book in _allBooks.Where(b => MatchesText(b, key)).Take(8))
+                SearchSuggestions.Add(book);
+            Notify(nameof(NoSearchSuggestions));
+            ShowSearchSuggestions = true;
+        }
+
+        private async Task OpenSuggestionAsync(CatalogBook book)
+        {
+            if (book == null) return;
+            try
+            {
+                await SearchAsync();
+                SelectedBook = Books.FirstOrDefault(b => b.BookId == book.BookId) ?? book;
+                await LoadDetailAsync();
+            }
+            catch (Exception) { Message = "Không thể mở sách được chọn."; }
+        }
+
         public async Task SearchAsync()
         {
             if (Busy) return;
+            ShowSearchSuggestions = false;
             Busy = true;
             Message = "Đang tìm sách...";
             try
             {
-                var result = await _catalog.SearchAsync(_token, Query);
+                // Refresh the real catalog on explicit Search/Reset/navigation.
+                // Live dropdown on each keystroke only filters the cached data.
+                // Existing API currently caps this result to 100 books.
+                var result = await _catalog.SearchAsync(_token, "");
                 if (!result.IsSuccess) { Message = result.Message; return; }
-                _searchResults.Clear();
-                if (result.Books != null) _searchResults.AddRange(result.Books);
+                _allBooks.Clear();
+                if (result.Books != null) _allBooks.AddRange(result.Books);
                 _booksLoaded = true;
+                _searchResults.Clear();
+                var key = Fold((Query ?? "").Trim());
+                _searchResults.AddRange(string.IsNullOrEmpty(key)
+                    ? _allBooks
+                    : _allBooks.Where(b => MatchesText(b, key)));
                 Recalculate(Facet.None);
             }
             catch (Exception) { Message = "Không tải được danh mục sách từ API."; }

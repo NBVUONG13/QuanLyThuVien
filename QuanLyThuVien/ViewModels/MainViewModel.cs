@@ -88,6 +88,7 @@ namespace QuanLyThuVien.ViewModels
 
             // Reuse one BookManagementViewModel for all browsing/search/metadata/copies work.
             Books = new BookManagementViewModel(_token, Role);
+            Books.BorrowBookRequested += book => { _ = OpenBorrowRequestFromBookAsync(book); };
             if (IsAdmin) Staff = new HRManagementViewModel(_token);
             ReaderPanel = new ReaderManagementViewModel(_token, Role);
             ReaderPanel.ReaderDetailRequested += (sender, args) =>
@@ -102,6 +103,22 @@ namespace QuanLyThuVien.ViewModels
 
             // Open the bookstore-style home page immediately after login.
             await NavigateHomeAsync();
+        }
+
+        private async Task OpenBorrowRequestFromBookAsync(CatalogBook book)
+        {
+            if (!IsReader || Requests == null || book == null) return;
+            // Show the existing request page first; no checkout or copy assignment here.
+            CurrentPage = Requests;
+            try
+            {
+                await Requests.LoadAsync();
+                await Requests.PreselectBookAsync(book);
+            }
+            catch (Exception)
+            {
+                Status = "Không thêm được sách vào đơn mượn. Hãy mở giỏ và thử lại.";
+            }
         }
 
         private async Task OpenRequestReaderAsync(string username)
@@ -154,7 +171,12 @@ namespace QuanLyThuVien.ViewModels
         {
             if (!IsAuthenticated || Loans == null) return;
             CurrentPage = Loans;
-            await Loans.LoadAsync();
+            // An order request is NOT a checked-out copy. Show both timelines,
+            // but load them independently into their existing ObservableCollections.
+            if (IsReader && Requests != null)
+                await Task.WhenAll(Loans.LoadAsync(), Requests.LoadHistoryAsync());
+            else
+                await Loans.LoadAsync();
         }
 
         private async Task NavigateRequestsAsync()
@@ -854,7 +876,7 @@ namespace QuanLyThuVien.ViewModels
             _token = token;
             IsReader = role == "Reader";
             CanManage = role == "Staff" || role == "Admin";
-            RefreshCommand = new AsyncCommand(_ => LoadAsync(), _ => !Busy);
+            RefreshCommand = new AsyncCommand(_ => LoadHistoryAsync(), _ => !Busy);
             AddBookCommand = new ActionCommand(_ => AddBook(),
                 _ => IsReader && !Busy && SelectedSuggestion != null);
             RemoveBookCommand = new ActionCommand(_ => RemoveBook(),
@@ -992,6 +1014,42 @@ namespace QuanLyThuVien.ViewModels
             }
             catch (Exception) { if (version == _searchVersion) CatalogStatus = "Không tải được đầu sách."; }
         }
+        // Entry from Home book detail: resolve the exact bookId from the existing
+        // request-suggestion API before adding it to the cart (no fabricated stock count).
+        public async Task PreselectBookAsync(CatalogBook book)
+        {
+            if (!IsReader || book == null) return;
+            foreach (var line in Cart)
+                if (line.BookId == book.BookId)
+                {
+                    Message = "Sách này đã nằm trong giỏ mượn của bạn.";
+                    return;
+                }
+            if (Cart.Count >= 5)
+            {
+                Message = "Giỏ đã có 5 đầu sách, hãy bỏ một sách trước.";
+                return;
+            }
+            try
+            {
+                var data = await _api.GetRequestBookSuggestionsAsync(_token, book.Title ?? "");
+                if (!data.IsSuccess)
+                {
+                    Message = data.Message ?? "Không tải được đầu sách.";
+                    return;
+                }
+                foreach (var candidate in data.Books)
+                {
+                    if (candidate.BookId != book.BookId) continue;
+                    SelectedSuggestion = candidate;
+                    AddBook();
+                    return;
+                }
+                Message = "Đầu sách vừa chọn chưa có trong danh mục yêu cầu.";
+            }
+            catch (Exception) { Message = "Không thêm được đầu sách vào giỏ."; }
+        }
+
         private void AddBook()
         {
             if (!IsReader || Busy || SelectedSuggestion == null) return;
@@ -1046,6 +1104,24 @@ namespace QuanLyThuVien.ViewModels
             SelectedRequest = null;
             return true;
         }
+        // Only refresh the submitted orders list. Do not reload book suggestions
+        // when Reader opens the history page; preserve the unfinished cart.
+        public async Task LoadHistoryAsync()
+        {
+            if (Busy) return;
+            Busy = true;
+            Message = "Đang tải các đơn đã đặt...";
+            try
+            {
+                if (await ReloadAsync())
+                    Message = Requests.Count == 0
+                        ? "Bạn chưa có đơn mượn nào."
+                        : "Có " + Requests.Count + " đơn đã đặt; chọn đơn để xem trạng thái hoặc hủy khi đang chờ.";
+            }
+            catch (Exception) { Message = "Không tải được lịch sử đơn mượn. Kiểm tra API."; }
+            finally { Busy = false; }
+        }
+
         public async Task LoadAsync()
         {
             if (Busy) return;
