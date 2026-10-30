@@ -252,6 +252,8 @@ namespace QuanLyThuVien.ViewModels
         private bool _detailsLoaded, _restrictionBusy;
         private int _detailVersion;
         private string _restrictionReason = "", _decisionMessage = "";
+        private bool _guestIdentityChecked, _guestClaimBusy;
+        private string _guestClaimCode = "", _guestClaimMessage = "";
         public ReaderProfileItem SelectedReader
         {
             get => _selectedReader;
@@ -261,6 +263,9 @@ namespace QuanLyThuVien.ViewModels
                 ++_detailVersion;
                 DetailsLoaded = false;
                 Insights = null;
+                GuestIdentityChecked = false;
+                GuestClaimCode = "";
+                GuestClaimMessage = "";
                 LoanHistory.Clear(); RestrictionHistory.Clear(); MonthlyBorrowCounts.Clear();
                 RefreshAccessCommands();
             }
@@ -278,11 +283,25 @@ namespace QuanLyThuVien.ViewModels
         public ICommand RefreshDetailsCommand { get; }
         public ICommand BlockBorrowCommand { get; }
         public ICommand UnblockBorrowCommand { get; }
+        public ICommand IssueGuestClaimCommand { get; }
+        public bool GuestIdentityChecked
+        {
+            get => _guestIdentityChecked;
+            set { if (Set(ref _guestIdentityChecked, value)) (IssueGuestClaimCommand as AsyncCommand)?.Refresh(); }
+        }
+        public string GuestClaimCode { get => _guestClaimCode; private set => Set(ref _guestClaimCode, value); }
+        public string GuestClaimMessage { get => _guestClaimMessage; private set => Set(ref _guestClaimMessage, value); }
+        public bool GuestClaimBusy
+        {
+            get => _guestClaimBusy;
+            private set { if (Set(ref _guestClaimBusy, value)) (IssueGuestClaimCommand as AsyncCommand)?.Refresh(); }
+        }
         private void RefreshAccessCommands()
         {
             (RefreshDetailsCommand as AsyncCommand)?.Refresh();
             (BlockBorrowCommand as AsyncCommand)?.Refresh();
             (UnblockBorrowCommand as AsyncCommand)?.Refresh();
+            (IssueGuestClaimCommand as AsyncCommand)?.Refresh();
         }
 
         public ReaderManagementViewModel(string token, string role)
@@ -319,6 +338,9 @@ namespace QuanLyThuVien.ViewModels
                 _ => CanManageReaders && DetailsLoaded && Insights?.Reader != null && !Insights.Reader.BorrowBlocked && !_restrictionBusy);
             UnblockBorrowCommand = new AsyncCommand(_ => UpdateBorrowAccessAsync(false),
                 _ => CanManageReaders && DetailsLoaded && Insights?.Reader != null && Insights.Reader.BorrowBlocked && !_restrictionBusy);
+            IssueGuestClaimCommand = new AsyncCommand(_ => IssueGuestClaimAsync(),
+                _ => CanManageReaders && SelectedReader != null && SelectedReader.IsGuest &&
+                     GuestIdentityChecked && !GuestClaimBusy && !Busy && string.IsNullOrEmpty(GuestClaimCode));
         }
 
         public bool IsReader { get; }
@@ -399,6 +421,27 @@ namespace QuanLyThuVien.ViewModels
             }
             catch (Exception) { Message = "Không thể tải dữ liệu độc giả lúc này."; }
             finally { Busy = false; }
+        }
+
+        private async Task IssueGuestClaimAsync()
+        {
+            if (!CanManageReaders || SelectedReader == null || !SelectedReader.IsGuest ||
+                !GuestIdentityChecked || GuestClaimBusy) return;
+            long guestId = SelectedReader.UserId;
+            GuestClaimBusy = true;
+            GuestClaimCode = "";
+            GuestClaimMessage = "Đang xin mã liên kết sử dụng một lần...";
+            try
+            {
+                var result = await _client.IssueGuestClaimAsync(_token, guestId);
+                if (SelectedReader?.UserId != guestId) return;
+                if (!result.IsSuccess)
+                { GuestClaimMessage = result.Message ?? "Không cấp được mã."; return; }
+                GuestClaimCode = result.GuestClaimCode;
+                GuestClaimMessage = "Chỉ trao trực tiếp cho đúng chủ hồ sơ. Mã hiệu lực 10 phút; cùng với mã Guest để đăng ký.";
+            }
+            catch (Exception) { GuestClaimMessage = "Không cấp được mã liên kết."; }
+            finally { GuestClaimBusy = false; }
         }
 
         private async Task LoadSelectedDetailsAsync()
@@ -553,6 +596,27 @@ namespace QuanLyThuVien.ViewModels
         private LoanBookSuggestion _selectedBookSuggestion;
         private LoanReaderSuggestion _selectedReader;
         private LoanItem _selectedLoan;
+        private LoanRenewalItem _selectedRenewal;
+        private string _renewalReviewNote = "";
+        public ObservableCollection<LoanRenewalItem> RenewalRequests { get; } = new ObservableCollection<LoanRenewalItem>();
+        public string RenewalReviewNote { get => _renewalReviewNote; set => Set(ref _renewalReviewNote, value); }
+        public ICommand RequestRenewalCommand { get; }
+        public ICommand CancelRenewalCommand { get; }
+        public ICommand ApproveRenewalCommand { get; }
+        public ICommand RejectRenewalCommand { get; }
+        public LoanRenewalItem SelectedRenewal
+        {
+            get => _selectedRenewal;
+            set { if (Set(ref _selectedRenewal, value)) RefreshRenewalCommands(); }
+        }
+        private void RefreshRenewalCommands()
+        {
+            (RequestRenewalCommand as AsyncCommand)?.Refresh();
+            (CancelRenewalCommand as AsyncCommand)?.Refresh();
+            (ApproveRenewalCommand as AsyncCommand)?.Refresh();
+            (RejectRenewalCommand as AsyncCommand)?.Refresh();
+        }
+
         private AvailableLoanCopy _selectedCopy;
         private int _identityVersion;
         private string _identityPhone = "", _identityCitizen = "", _identityMessage =
@@ -651,6 +715,14 @@ namespace QuanLyThuVien.ViewModels
             CheckoutCommand = new AsyncCommand(_ => CheckoutAsync(), _ => CanManage && !Busy);
             ReturnCommand = new AsyncCommand(_ => ReturnAsync(),
                 _ => CanManage && !Busy && SelectedLoan != null && SelectedLoan.IsOpen);
+            RequestRenewalCommand = new AsyncCommand(_ => RequestRenewalAsync(),
+                _ => IsReader && !Busy && SelectedLoan != null && SelectedLoan.IsOpen);
+            CancelRenewalCommand = new AsyncCommand(_ => CancelRenewalAsync(),
+                _ => IsReader && !Busy && SelectedRenewal != null && SelectedRenewal.Status == "pending");
+            ApproveRenewalCommand = new AsyncCommand(_ => ReviewRenewalAsync(true),
+                _ => CanManage && !Busy && SelectedRenewal != null && SelectedRenewal.Status == "pending");
+            RejectRenewalCommand = new AsyncCommand(_ => ReviewRenewalAsync(false),
+                _ => CanManage && !Busy && SelectedRenewal != null && SelectedRenewal.Status == "pending");
             WalkInAddBookCommand = new ActionCommand(_ => AddWalkInBook(),
                 _ => CanManage && WalkInSelectedBook != null && WalkInCart.Count < 5);
             WalkInRemoveBookCommand = new ActionCommand(_ =>
@@ -797,6 +869,7 @@ namespace QuanLyThuVien.ViewModels
                 (SearchAvailableCommand as AsyncCommand)?.Refresh();
                 (CheckoutCommand as AsyncCommand)?.Refresh();
                 (ReturnCommand as AsyncCommand)?.Refresh();
+                RefreshRenewalCommands();
                 (WalkInSubmitCommand as AsyncCommand)?.Refresh();
                 (ShowExistingWalkInCommand as ActionCommand)?.Refresh();
                 (ShowNewWalkInCommand as ActionCommand)?.Refresh();
@@ -809,6 +882,7 @@ namespace QuanLyThuVien.ViewModels
             {
                 if (!Set(ref _selectedLoan, value)) return;
                 (ReturnCommand as AsyncCommand)?.Refresh();
+                RefreshRenewalCommands();
             }
         }
         public AvailableLoanCopy SelectedCopy
@@ -1097,6 +1171,64 @@ namespace QuanLyThuVien.ViewModels
             SelectedLoan = null;
             return true;
         }
+        private async Task<bool> FetchRenewalsAsync()
+        {
+            var result = await _api.GetLoanRenewalsAsync(_token);
+            if (!result.IsSuccess) { Message = result.Message; return false; }
+            Replace(RenewalRequests, result.Requests);
+            SelectedRenewal = null;
+            return true;
+        }
+        private async Task RequestRenewalAsync()
+        {
+            if (!IsReader || Busy || SelectedLoan == null || !SelectedLoan.IsOpen) return;
+            var id = SelectedLoan.BorrowDetailId;
+            Busy = true;
+            try
+            {
+                var result = await _api.RequestLoanRenewalAsync(_token, id);
+                Message = result.Message;
+                if (result.IsSuccess) await FetchRenewalsAsync();
+            }
+            catch (Exception) { Message = "Không gửi được đơn gia hạn."; }
+            finally { Busy = false; }
+        }
+        private async Task CancelRenewalAsync()
+        {
+            if (!IsReader || Busy || SelectedRenewal == null || SelectedRenewal.Status != "pending") return;
+            var id = SelectedRenewal.RequestId;
+            Busy = true;
+            try
+            {
+                var result = await _api.CancelLoanRenewalAsync(_token, id);
+                Message = result.Message;
+                if (result.IsSuccess) await FetchRenewalsAsync();
+            }
+            catch (Exception) { Message = "Không hủy được đơn gia hạn."; }
+            finally { Busy = false; }
+        }
+        private async Task ReviewRenewalAsync(bool approve)
+        {
+            if (!CanManage || Busy || SelectedRenewal == null || SelectedRenewal.Status != "pending") return;
+            if (!approve && string.IsNullOrWhiteSpace(RenewalReviewNote))
+            { Message = "Phải nhập lý do từ chối gia hạn."; return; }
+            var id = SelectedRenewal.RequestId;
+            Busy = true;
+            try
+            {
+                var result = await _api.ReviewLoanRenewalAsync(_token, id, approve, RenewalReviewNote);
+                Message = result.Message;
+                if (result.IsSuccess)
+                {
+                    RenewalReviewNote = "";
+                    await FetchRenewalsAsync();
+                    await FetchLoansAsync();
+                    Message = result.Message;
+                }
+            }
+            catch (Exception) { Message = "Không duyệt được đơn gia hạn."; }
+            finally { Busy = false; }
+        }
         private async Task<bool> FetchCopiesAsync()
         {
             if (!CanManage) return true;
@@ -1117,8 +1249,9 @@ namespace QuanLyThuVien.ViewModels
             try
             {
                 bool loansOk = await FetchLoansAsync();
-                bool copiesOk = loansOk && await FetchCopiesAsync();
-                if (loansOk && copiesOk)
+                bool renewalOk = loansOk && await FetchRenewalsAsync();
+                bool copiesOk = renewalOk && await FetchCopiesAsync();
+                if (loansOk && renewalOk && copiesOk)
                     Message = Loans.Count == 0
                         ? "Chưa có lượt mượn sách nào."
                         : "Đã tải " + Loans.Count + " lượt mượn/trả gần nhất (tối đa 100).";

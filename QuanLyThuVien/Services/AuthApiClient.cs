@@ -249,6 +249,41 @@ namespace QuanLyThuVien.Services
         }
 
 
+        // STEP 65: Staff-assisted, single-use code for an EXISTING Guest profile.
+        // The code is never written to local files or logs.
+        public async Task<GuestClaimIssueResult> IssueGuestClaimAsync(string token, long readerId)
+        {
+            if (readerId <= 0 || string.IsNullOrWhiteSpace(token))
+                return new GuestClaimIssueResult { Message = "Chưa có Guest hoặc phiên hợp lệ." };
+            try
+            {
+                using (var req = new HttpRequestMessage(HttpMethod.Post,
+                    "http://127.0.0.1:5082/api/readers/" + readerId + "/guest-claim"))
+                {
+                    req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+                    req.Content = new StringContent("{\"staffVerifiedIdentity\":true}", Encoding.UTF8, "application/json");
+                    using (var res = await Http.SendAsync(req))
+                    {
+                        string json = await res.Content.ReadAsStringAsync();
+                        if (!res.IsSuccessStatusCode)
+                            return new GuestClaimIssueResult
+                            {
+                                Message = ReadApiError(json,
+                                "Không cấp được mã liên kết (HTTP " + (int)res.StatusCode + ").")
+                            };
+                        var result = DeserializeJson<GuestClaimIssueResult>(json);
+                        if (result == null || string.IsNullOrWhiteSpace(result.GuestClaimCode))
+                            return new GuestClaimIssueResult { Message = "Phản hồi API không hợp lệ." };
+                        result.IsSuccess = true;
+                        return result;
+                    }
+                }
+            }
+            catch (Exception ex) when (ex is HttpRequestException || ex is TaskCanceledException ||
+                                        ex is SerializationException || ex is ArgumentException)
+            { return new GuestClaimIssueResult { Message = "Không kết nối được API liên kết Guest." }; }
+        }
+
         // STEP 57: Reader insights and borrow-access decisions for Staff/Admin.
         public async Task<ReaderInsightResponse> GetReaderInsightsAsync(string token, long readerId)
         {
@@ -430,6 +465,7 @@ namespace QuanLyThuVien.Services
         [DataMember(Name = "fullName")] public string FullName { get; set; }
         [DataMember(Name = "tierName")] public string TierName { get; set; }
         [DataMember(Name = "status")] public string Status { get; set; }
+        [DataMember(Name = "isGuest")] public bool IsGuest { get; set; }
         // Only returned by GET /api/readers/me; NEVER included in admin/staff list.
         [DataMember(Name = "phone")] public string Phone { get; set; }
         [DataMember(Name = "phoneVerified")] public bool PhoneVerified { get; set; }
@@ -453,6 +489,15 @@ namespace QuanLyThuVien.Services
         [DataMember(Name = "message")] public string Message { get; set; }
     }
 
+
+    [DataContract]
+    public sealed class GuestClaimIssueResult
+    {
+        [IgnoreDataMember] public bool IsSuccess { get; set; }
+        [DataMember(Name = "message")] public string Message { get; set; }
+        [DataMember(Name = "guestClaimCode")] public string GuestClaimCode { get; set; }
+        [DataMember(Name = "expiresAt")] public string ExpiresAt { get; set; }
+    }
 
     // STEP 57: API DTOs; live binding is done in ReaderManagementViewModel.
     [DataContract]

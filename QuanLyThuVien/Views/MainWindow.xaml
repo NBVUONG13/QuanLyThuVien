@@ -605,91 +605,6 @@
                             </StackPanel>
                         </Border>
                     </Grid>
-
-                    <!-- Legacy one-copy immediate checkout remains available but is COLLAPSED. -->
-                    <Expander Header="MƯỢN TRỰC TIẾP BẰNG MÃ CUỐN (NGHIỆP VỤ CŨ)"
-                                  Visibility="{Binding WalkInExistingMode, Converter={StaticResource BoolVisibility}}"
-                                  IsExpanded="False" Margin="0,15,0,0" Background="White"
-                                  Foreground="#4B3972" FontWeight="SemiBold">
-                        <Border BorderBrush="#E0D8EE" BorderThickness="1" CornerRadius="8"
-                                    Background="White" Padding="16" Margin="0,7,0,0">
-                            <StackPanel>
-                                <TextBlock Text="Chỉ dùng cho Reader đã có tài khoản và cuốn vật lý. Mặc định nên tạo đơn chờ duyệt ở bên trên."
-                                               TextWrapping="Wrap" Foreground="#786B87" Margin="0,0,0,12" />
-                                <TextBlock Text="Tìm độc giả theo tên, username hoặc mã độc giả" FontWeight="SemiBold"/>
-                                <TextBox x:Name="LoanReaderSearchInput" Text="{Binding ReaderUsername, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Height="36" Padding="9,6" Margin="0,5,0,5" MaxLength="100" ToolTip="Gõ tên/username/mã độc giả; chọn một gợi ý xổ xuống."/>
-                                <Popup PlacementTarget="{Binding ElementName=LoanReaderSearchInput}" Placement="Bottom" StaysOpen="False" AllowsTransparency="True" PopupAnimation="Fade" IsOpen="{Binding ShowReaderSuggestions, Mode=TwoWay}">
-                                    <Border Background="White" BorderBrush="#B9A5D9" BorderThickness="1" CornerRadius="5" Width="550" MaxHeight="270" SnapsToDevicePixels="True">
-                                        <ListBox ItemsSource="{Binding ReaderSuggestions, Mode=OneWay}" SelectedItem="{Binding SelectedReader, Mode=TwoWay}" BorderThickness="0" Background="White" MaxHeight="260" ScrollViewer.VerticalScrollBarVisibility="Auto">
-                                            <ListBox.ItemTemplate>
-                                                <DataTemplate>
-                                                    <StackPanel Orientation="Horizontal" Margin="9,7">
-                                                        <TextBlock FontFamily="Segoe MDL2 Assets" Text="" Foreground="#6951A1" Margin="0,0,11,0" FontSize="17"/>
-                                                        <TextBlock Text="{Binding Caption, Mode=OneWay}" TextTrimming="CharacterEllipsis"/>
-                                                    </StackPanel>
-                                                </DataTemplate>
-                                            </ListBox.ItemTemplate>
-                                        </ListBox>
-                                    </Border>
-                                </Popup>
-                                <TextBlock Text="{Binding ReaderSearchMessage, Mode=OneWay}" Foreground="#746882" FontSize="12" Margin="0,0,0,8" TextWrapping="Wrap"/>
-                                <TextBlock Text="Tìm sách để mượn (gợi ý ngay khi gõ, không phân biệt dấu)" FontWeight="SemiBold"/>
-                                <TextBox x:Name="LoanBookSearchInput" Text="{Binding CopyQuery, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Height="36" Padding="9,6" MaxLength="80" Margin="0,5,0,5" ToolTip="Ví dụ: C#, Python, vuong; gợi ý chứa cả đầu sách chưa nhập cuốn."/>
-                                <Popup PlacementTarget="{Binding ElementName=LoanBookSearchInput}" Placement="Bottom" AllowsTransparency="True" StaysOpen="False" PopupAnimation="Fade" IsOpen="{Binding ShowBookSuggestions, Mode=TwoWay}">
-                                    <Border Background="White" BorderBrush="#B9A5D9" BorderThickness="1" CornerRadius="5" Width="630" MaxHeight="365" SnapsToDevicePixels="True">
-                                        <ListBox ItemsSource="{Binding BookSuggestions, Mode=OneWay}" SelectedItem="{Binding SelectedBookSuggestion, Mode=TwoWay}" BorderThickness="0" Background="White" MaxHeight="350" ScrollViewer.VerticalScrollBarVisibility="Auto">
-                                            <ListBox.ItemTemplate>
-                                                <DataTemplate>
-                                                    <Grid Margin="8,7" MinHeight="55">
-                                                        <Grid.ColumnDefinitions>
-                                                            <ColumnDefinition Width="42"/>
-                                                            <ColumnDefinition Width="*"/>
-                                                        </Grid.ColumnDefinitions>
-                                                        <Border Grid.Column="0" Width="36" Height="48" Background="#EDE8F5" CornerRadius="3" VerticalAlignment="Top">
-                                                            <TextBlock FontFamily="Segoe MDL2 Assets" Text="" Foreground="#6951A1" FontSize="19" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                                                        </Border>
-                                                        <StackPanel Grid.Column="1" Margin="8,0,4,0">
-                                                            <TextBlock Text="{Binding Title, Mode=OneWay}" FontWeight="SemiBold" Foreground="#33274F" FontSize="14" TextTrimming="CharacterEllipsis"/>
-                                                            <TextBlock Text="{Binding Metadata, Mode=OneWay}" Foreground="#766B87" FontSize="12" TextTrimming="CharacterEllipsis"/>
-                                                            <TextBlock Text="{Binding AvailabilityText, Mode=OneWay}" Foreground="#267965" FontSize="12" FontWeight="SemiBold"/>
-                                                        </StackPanel>
-                                                    </Grid>
-                                                </DataTemplate>
-                                            </ListBox.ItemTemplate>
-                                        </ListBox>
-                                    </Border>
-                                </Popup>
-                                <TextBlock Text="{Binding CopySearchMessage, Mode=OneWay}" Foreground="#746882" FontSize="12" Margin="0,0,0,8" TextWrapping="Wrap"/>
-                                <DataGrid ItemsSource="{Binding AvailableCopies, Mode=OneWay}" SelectedItem="{Binding SelectedCopy, Mode=TwoWay}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" CanUserDeleteRows="False" Height="188" SelectionMode="Single" Background="White" ScrollViewer.HorizontalScrollBarVisibility="Auto" Margin="0,0,0,13">
-                                    <DataGrid.Columns>
-                                        <DataGridTextColumn Header="Mã cuốn" Binding="{Binding CopyCode, Mode=OneWay}" Width="160" MinWidth="120"/>
-                                        <DataGridTextColumn Header="Tên sách" Binding="{Binding BookTitle, Mode=OneWay}" Width="2*" MinWidth="220"/>
-                                        <DataGridTextColumn Header="Vị trí kệ" Binding="{Binding Shelf, Mode=OneWay}" Width="*" MinWidth="125"/>
-                                    </DataGrid.Columns>
-                                </DataGrid>
-                                <TextBlock Text="Chọn cuốn trong bảng hoặc nhập mã cuốn bên dưới." Foreground="#796A8E" FontSize="12" Margin="0,0,0,9"/>
-                                <Grid Margin="0,0,0,12">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="2*"/>
-                                        <ColumnDefinition Width="13"/>
-                                        <ColumnDefinition Width="*"/>
-                                    </Grid.ColumnDefinitions>
-                                    <StackPanel Grid.Column="0">
-                                        <TextBlock Text="Mã cuốn" FontWeight="SemiBold"/>
-                                        <TextBox Text="{Binding CopyCode, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Height="36" Padding="9,6" Margin="0,5,0,0" MaxLength="60"/>
-                                    </StackPanel>
-                                    <StackPanel Grid.Column="2">
-                                        <TextBlock Text="Số ngày mượn" FontWeight="SemiBold"/>
-                                        <TextBox Text="{Binding LoanDays, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Height="36" Padding="9,6" Margin="0,5,0,0" MaxLength="3"/>
-                                    </StackPanel>
-                                </Grid>
-                                <Button Command="{Binding CheckoutCommand}" Content="TẠO PHIẾU TRỰC TIẾP (HIỆN CÓ)" Background="#287C67" Foreground="White" BorderThickness="0" Height="42" HorizontalAlignment="Left" Width="200"/>
-                                <TextBlock Text="Giới hạn cuốn và ngày mượn lấy từ hạng độc giả; API kiểm tra lại trước khi lưu." TextWrapping="Wrap" Foreground="#796A8E" FontSize="12" Margin="0,12,0,0"/>
-
-                            </StackPanel>
-                        </Border>
-                    </Expander>
-
                 </StackPanel>
             </DataTemplate>
             <DataTemplate DataType="{x:Type vm:WalkInCounterPage}">
@@ -761,6 +676,52 @@
                                 <Button Command="{Binding ReturnCommand}" Height="40" Width="205"
                                     Content="GHI NHẬN TRẢ CUỐN" HorizontalAlignment="Left"
                                     Background="#6951A1" Foreground="White" BorderThickness="0" />
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Step 66: per-copy renewal requests; no separate page and no auto-renewal. -->
+                    <Border Background="White" BorderBrush="#E6DFF1" BorderThickness="1"
+                            CornerRadius="9" Padding="17" Margin="0,14,0,0">
+                        <StackPanel>
+                            <TextBlock Text="Yêu cầu gia hạn từng cuốn" FontSize="18" FontWeight="SemiBold"
+                                       Foreground="#35294D" Margin="0,0,0,6" />
+                            <TextBlock Text="Reader chọn cuốn còn đang mượn ở bảng phía trên rồi gửi yêu cầu. Chỉ khi Staff/Admin duyệt, hạn trả mới được đổi theo chính sách hiện hành."
+                                       TextWrapping="Wrap" Foreground="#796A8E" FontSize="12" Margin="0,0,0,10" />
+                            <Button Content="GỬI YÊU CẦU GIA HẠN CUỐN ĐÃ CHỌN" Command="{Binding RequestRenewalCommand}"
+                                    Visibility="{Binding IsReader, Converter={StaticResource BoolVisibility}}"
+                                    Height="38" MinWidth="300" HorizontalAlignment="Left" Background="#6951A1"
+                                    Foreground="White" BorderThickness="0" Margin="0,0,0,12" />
+                            <DataGrid ItemsSource="{Binding RenewalRequests, Mode=OneWay}"
+                                      SelectedItem="{Binding SelectedRenewal, Mode=TwoWay}"
+                                      AutoGenerateColumns="False" IsReadOnly="True" Height="210"
+                                      CanUserAddRows="False" CanUserDeleteRows="False" SelectionMode="Single"
+                                      ScrollViewer.HorizontalScrollBarVisibility="Auto">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="Độc giả" Binding="{Binding ReaderUsername}" Width="115" />
+                                    <DataGridTextColumn Header="Sách" Binding="{Binding BookTitle}" Width="2*" MinWidth="180" />
+                                    <DataGridTextColumn Header="Mã cuốn" Binding="{Binding CopyCode}" Width="105" />
+                                    <DataGridTextColumn Header="Gửi lúc" Binding="{Binding RequestedAt}" Width="145" />
+                                    <DataGridTextColumn Header="Trạng thái" Binding="{Binding Status}" Width="95" />
+                                    <DataGridTextColumn Header="Lý do/ghi chú" Binding="{Binding ReviewNote}" Width="2*" MinWidth="170" />
+                                </DataGrid.Columns>
+                            </DataGrid>
+                            <Button Content="HỦY YÊU CẦU GIA HẠN ĐANG CHỜ" Command="{Binding CancelRenewalCommand}"
+                                    Visibility="{Binding IsReader, Converter={StaticResource BoolVisibility}}"
+                                    Width="260" Height="36" HorizontalAlignment="Left" Margin="0,10,0,0"
+                                    Background="#F5EFF9" Foreground="#594079" />
+                            <StackPanel Visibility="{Binding CanManage, Converter={StaticResource BoolVisibility}}"
+                                        Margin="0,12,0,0">
+                                <TextBlock Text="Ghi chú xét duyệt (bắt buộc khi từ chối)" FontWeight="SemiBold"/>
+                                <TextBox Text="{Binding RenewalReviewNote, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                         MaxLength="500" Height="36" Padding="8,6" Margin="0,6,0,10" />
+                                <StackPanel Orientation="Horizontal">
+                                    <Button Command="{Binding ApproveRenewalCommand}" Content="DUYỆT GIA HẠN"
+                                            Width="175" Height="38" Margin="0,0,10,0"
+                                            Background="#216F54" Foreground="White" BorderThickness="0" />
+                                    <Button Command="{Binding RejectRenewalCommand}" Content="TỪ CHỐI"
+                                            Width="135" Height="38" Background="#8F4652" Foreground="White" BorderThickness="0" />
+                                </StackPanel>
                             </StackPanel>
                         </StackPanel>
                     </Border>

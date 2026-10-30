@@ -259,6 +259,40 @@ app.MapGet("/api/dashboard/summary", async (
 // OTP duoc in ra terminal API, khong gui SMS, chua xac minh so dien thoai that.
 if (app.Environment.IsDevelopment())
 {
+    app.MapPost("/api/auth/register/guest-preview", async (
+        GuestPreviewRequest request,
+        RegistrationService registrationService,
+        CancellationToken cancellationToken) =>
+    {
+        try
+        {
+            var preview = await registrationService.PreviewGuestAsync(
+                request.GuestClaimCode, cancellationToken);
+            // Only a valid, unexpired Staff claim can reveal the existing name/phone.
+            // Never return a raw CCCD, fingerprint, password, or borrowing history.
+            return Results.Ok(new
+            {
+                message = "guest_preview_ready_dev_only",
+                fullName = preview.FullName,
+                phone = preview.Phone
+            });
+        }
+        catch (RegistrationException ex)
+        {
+            return Results.Json(new { code = ex.Code, message = ex.Message },
+                statusCode: ex.Code == "guest_claim_unavailable" ? 429 : 400);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return Results.StatusCode(499);
+        }
+        catch (Exception ex)
+        {
+            app.Logger.LogError("Guest preview failed: {ErrorType}", ex.GetType().Name);
+            return Results.Json(new { message = "Khong the tai ho so Guest luc nay." }, statusCode: 503);
+        }
+    });
+
     app.MapPost("/api/auth/register/start", async (
         RegisterStartRequest request,
         RegistrationService registrationService,
@@ -271,6 +305,7 @@ if (app.Environment.IsDevelopment())
                 request.Username,
                 request.Phone,
                 request.Password,
+                request.GuestClaimCode,
                 cancellationToken);
 
             return Results.Ok(new
@@ -868,7 +903,7 @@ app.MapGet("/api/readers", async (string? query, HttpRequest request, SessionSer
         await connection.OpenAsync(cancellationToken);
         const string sql = @"
             SELECT u.user_id, u.username, rp.reader_code, rp.full_name,
-                   t.tier_name, u.account_status
+                   t.tier_name, u.account_status, u.is_guest
             FROM public.reader_profiles rp
             JOIN public.users u ON u.user_id = rp.user_id
             JOIN public.reader_tiers t ON t.tier_id = rp.tier_id
@@ -891,7 +926,8 @@ app.MapGet("/api/readers", async (string? query, HttpRequest request, SessionSer
                 readerCode = rd.GetString(2),
                 fullName = rd.GetString(3),
                 tierName = rd.GetString(4),
-                status = rd.GetString(5)
+                status = rd.GetString(5),
+                isGuest = rd.GetBoolean(6)
                 // Do NOT expose Reader phone or citizen information to the list.
             });
         return Results.Ok(new { readers = rows });
@@ -1495,6 +1531,69 @@ app.MapGet("/api/readers/{readerId:long}/insights", async (long readerId,
     {
         app.Logger.LogError(ex, "Reader insight error at {Stage}", insightStage);
         return Results.Json(new { message = "Không tải được chi tiết độc giả tại mục " + insightStage + "." }, statusCode: 503);
+    }
+});
+
+// STEP 65: Staff-assisted claim, NOT automatic merging by matching phone/CCCD.
+// Only works in Development with physical identity checking at the counter.
+app.MapPost("/api/readers/{readerId:long}/guest-claim", async (
+    long readerId, GuestClaimIssueRequest body, HttpRequest request,
+    SessionService sessions, IConfiguration config, RegistrationService registration,
+    CancellationToken ct) =>
+{
+    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    var actor = sessions.Validate(ReadBearerToken(request));
+    if (actor is null) return Results.Unauthorized();
+    if (actor.Role is not ("Staff" or "Admin")) return Results.StatusCode(403);
+    if (readerId <= 0 || body is null || !body.StaffVerifiedIdentity)
+        return Results.BadRequest(new { message = "Nhân viên phải trực tiếp kiểm tra giấy tờ hoặc quyền sở hữu thông tin liên hệ." });
+    try
+    {
+        var cs = config.GetConnectionString("AivenPostgres")
+            ?? throw new InvalidOperationException("Missing database configuration.");
+        await using var db = new NpgsqlConnection(cs);
+        await db.OpenAsync(ct);
+        await using var tx = await db.BeginTransactionAsync(ct);
+        await using (var check = new NpgsqlCommand(@"
+            SELECT u.user_id FROM public.users u
+            JOIN public.roles role ON role.role_id = u.role_id
+            JOIN public.reader_profiles rp ON rp.user_id = u.user_id
+            WHERE u.user_id=@id AND u.is_guest=TRUE
+              AND u.account_status='active' AND role.role_name='Reader'
+            FOR UPDATE OF u, rp;", db, tx))
+        {
+            check.Parameters.AddWithValue("id", readerId);
+            if (await check.ExecuteScalarAsync(ct) is null)
+                return Results.Conflict(new { message = "Hồ sơ không phải Guest đang hoạt động hoặc đã được liên kết." });
+        }
+        // Audit the human attestation; never write activation code or identity number to audit.
+        await using (var log = new NpgsqlCommand(@"
+            INSERT INTO public.audit_logs(actor_user_id,action,entity_type,entity_id,details)
+            VALUES(@actor,'guest_claim_issued','guest_activation',@entity,
+                   '{""verification"":""staff_attested_at_counter""}'::jsonb);", db, tx))
+        {
+            log.Parameters.AddWithValue("actor", actor.UserId);
+            log.Parameters.AddWithValue("entity", readerId.ToString(CultureInfo.InvariantCulture));
+            await log.ExecuteNonQueryAsync(ct);
+        }
+        var claim = registration.IssueGuestClaim(readerId, actor.UserId);
+        await tx.CommitAsync(ct);
+        return Results.Ok(new
+        {
+            message = "guest_claim_issued_dev_only",
+            guestClaimCode = claim.Code,
+            expiresAt = claim.ExpiresAt
+        });
+    }
+    catch (RegistrationException ex)
+    {
+        return Results.Json(new { message = ex.Message }, statusCode: 409);
+    }
+    catch (OperationCanceledException) when (ct.IsCancellationRequested) { return Results.StatusCode(499); }
+    catch (Exception ex)
+    {
+        app.Logger.LogError("Guest claim issue failed: {Type}", ex.GetType().Name);
+        return Results.Json(new { message = "Không cấp được mã liên kết Guest." }, statusCode: 503);
     }
 });
 
@@ -2581,6 +2680,310 @@ app.MapPost("/api/borrow-requests/{requestId:long}/review", async (
     }
 });
 
+// STEP 66 — Gia hạn từng cuốn: Reader gửi yêu cầu, Staff/Admin xét duyệt.
+// Sử dụng các bảng DB-11 có sẵn; không tự tạo/migrate policy hay bảng.
+app.MapGet("/api/loan-renewals", async (HttpRequest request, SessionService sessions,
+    IConfiguration configuration, CancellationToken ct) =>
+{
+    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    var actor = sessions.Validate(ReadBearerToken(request));
+    if (actor is null) return Results.Unauthorized();
+    if (actor.Role is not ("Reader" or "Staff" or "Admin")) return Results.StatusCode(403);
+    try
+    {
+        var cs = configuration.GetConnectionString("AivenPostgres")
+            ?? throw new InvalidOperationException("Database is not configured");
+        await using var db = new NpgsqlConnection(cs);
+        await db.OpenAsync(ct);
+        await using var cmd = new NpgsqlCommand(@"
+            SELECT r.request_id, r.borrow_detail_id, u.username, bc.copy_code, bk.title,
+                   r.status, r.requested_at, bd.due_at, COALESCE(r.review_note,''),
+                   COALESCE(bd.closed_at IS NULL, FALSE)
+            FROM public.borrow_renewal_requests r
+            JOIN public.borrow_details bd ON bd.borrow_detail_id=r.borrow_detail_id
+            JOIN public.borrows b ON b.borrow_id=bd.borrow_id
+            JOIN public.users u ON u.user_id=b.reader_user_id
+            JOIN public.book_copies bc ON bc.copy_id=bd.book_copy_id
+            JOIN public.books bk ON bk.book_id=bc.book_id
+            WHERE (@is_reader=FALSE OR b.reader_user_id=@reader)
+            ORDER BY (r.status='pending') DESC, r.requested_at DESC, r.request_id DESC LIMIT 100;", db);
+        cmd.Parameters.AddWithValue("is_reader", actor.Role == "Reader");
+        cmd.Parameters.AddWithValue("reader", actor.UserId);
+        var rows = new List<object>();
+        await using var rd = await cmd.ExecuteReaderAsync(ct);
+        while (await rd.ReadAsync(ct))
+            rows.Add(new
+            {
+                requestId = rd.GetInt64(0),
+                borrowDetailId = rd.GetInt64(1),
+                readerUsername = rd.GetString(2),
+                copyCode = rd.GetString(3),
+                bookTitle = rd.GetString(4),
+                status = rd.GetString(5),
+                requestedAt = rd.GetDateTime(6).ToUniversalTime().ToString("yyyy-MM-dd HH:mm 'UTC'", CultureInfo.InvariantCulture),
+                currentDueAt = rd.GetDateTime(7).ToUniversalTime().ToString("yyyy-MM-dd HH:mm 'UTC'", CultureInfo.InvariantCulture),
+                reviewNote = rd.GetString(8),
+                isOpen = rd.GetBoolean(9)
+            });
+        return Results.Ok(new { requests = rows });
+    }
+    catch (PostgresException ex) when (ex.SqlState is PostgresErrorCodes.UndefinedTable or PostgresErrorCodes.UndefinedColumn)
+    { return Results.Conflict(new { message = "Thiếu bảng/cột gia hạn DB-11. Kiểm tra schema Aiven trước khi dùng." }); }
+    catch (OperationCanceledException) when (ct.IsCancellationRequested) { return Results.StatusCode(499); }
+    catch (Exception ex)
+    {
+        app.Logger.LogError("Load renewal requests failed: {Type}", ex.GetType().Name);
+        return Results.Json(new { message = "Không tải được yêu cầu gia hạn." }, statusCode: 503);
+    }
+});
+
+app.MapPost("/api/loan-renewals/request", async (NewLoanRenewalRequest input, HttpRequest request,
+    SessionService sessions, IConfiguration configuration, CancellationToken ct) =>
+{
+    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    var actor = sessions.Validate(ReadBearerToken(request));
+    if (actor is null) return Results.Unauthorized();
+    if (actor.Role != "Reader") return Results.StatusCode(403);
+    if (input.BorrowDetailId <= 0) return Results.BadRequest(new { message = "Chọn một cuốn đang mượn." });
+    try
+    {
+        var cs = configuration.GetConnectionString("AivenPostgres")
+            ?? throw new InvalidOperationException("Database is not configured");
+        await using var db = new NpgsqlConnection(cs);
+        await db.OpenAsync(ct);
+        await using var tx = await db.BeginTransactionAsync(ct);
+        DateTime due; bool open;
+        // Lock the detail before reading renewal status: same order as review endpoint.
+        await using (var detail = new NpgsqlCommand(@"
+            SELECT d.due_at, d.closed_at IS NULL
+            FROM public.borrow_details d JOIN public.borrows b ON b.borrow_id=d.borrow_id
+            WHERE d.borrow_detail_id=@detail AND b.reader_user_id=@reader FOR UPDATE OF d;", db, tx))
+        {
+            detail.Parameters.AddWithValue("detail", input.BorrowDetailId);
+            detail.Parameters.AddWithValue("reader", actor.UserId);
+            await using var rd = await detail.ExecuteReaderAsync(ct);
+            if (!await rd.ReadAsync(ct)) return Results.NotFound();
+            due = rd.GetDateTime(0); open = rd.GetBoolean(1);
+        }
+        if (!open) return Results.Conflict(new { message = "Cuốn này đã đóng phiếu mượn." });
+        int max; bool allowLate;
+        await using (var policy = new NpgsqlCommand(@"
+            SELECT max_renewals, allow_overdue_renewal_requests
+            FROM public.borrowing_policy_versions WHERE effective_at <= NOW()
+            ORDER BY effective_at DESC LIMIT 1;", db, tx))
+        {
+            await using var rd = await policy.ExecuteReaderAsync(ct);
+            if (!await rd.ReadAsync(ct)) return Results.Conflict(new { message = "Chưa có chính sách gia hạn đang hiệu lực; liên hệ Admin." });
+            max = rd.GetInt32(0); allowLate = rd.GetBoolean(1);
+        }
+        if (due < DateTime.UtcNow && !allowLate)
+            return Results.Conflict(new { message = "Cuốn đã quá hạn, chính sách hiện tại không cho yêu cầu gia hạn." });
+        await using (var count = new NpgsqlCommand(@"
+            SELECT COUNT(*) FROM public.borrow_renewals WHERE borrow_detail_id=@detail;", db, tx))
+        {
+            count.Parameters.AddWithValue("detail", input.BorrowDetailId);
+            if (Convert.ToInt64(await count.ExecuteScalarAsync(ct)) >= max)
+                return Results.Conflict(new { message = "Cuốn đã hết số lần được gia hạn." });
+        }
+        await using (var pending = new NpgsqlCommand(@"
+            SELECT EXISTS(SELECT 1 FROM public.borrow_renewal_requests
+                         WHERE borrow_detail_id=@detail AND status='pending');", db, tx))
+        {
+            pending.Parameters.AddWithValue("detail", input.BorrowDetailId);
+            if ((bool)(await pending.ExecuteScalarAsync(ct) ?? false))
+                return Results.Conflict(new { message = "Cuốn đã có yêu cầu gia hạn đang chờ." });
+        }
+        long requestId;
+        await using (var create = new NpgsqlCommand(@"
+            INSERT INTO public.borrow_renewal_requests(borrow_detail_id,requested_by_user_id,status)
+            VALUES(@detail,@reader,'pending') RETURNING request_id;", db, tx))
+        {
+            create.Parameters.AddWithValue("detail", input.BorrowDetailId);
+            create.Parameters.AddWithValue("reader", actor.UserId);
+            requestId = Convert.ToInt64(await create.ExecuteScalarAsync(ct));
+        }
+        await tx.CommitAsync(ct);
+        return Results.Ok(new { message = $"Đã gửi yêu cầu gia hạn #{requestId}; hạn trả chưa thay đổi.", requestId });
+    }
+    catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UniqueViolation)
+    { return Results.Conflict(new { message = "Cuốn đã có đơn gia hạn chờ duyệt." }); }
+    catch (PostgresException ex) when (ex.SqlState is PostgresErrorCodes.UndefinedTable or PostgresErrorCodes.UndefinedColumn)
+    { return Results.Conflict(new { message = "Thiếu bảng/cột gia hạn DB-11. Kiểm tra schema Aiven." }); }
+    catch (OperationCanceledException) when (ct.IsCancellationRequested) { return Results.StatusCode(499); }
+    catch (Exception ex)
+    {
+        app.Logger.LogError("Create renewal request failed: {Type}", ex.GetType().Name);
+        return Results.Json(new { message = "Không gửi được yêu cầu gia hạn." }, statusCode: 503);
+    }
+});
+
+app.MapPost("/api/loan-renewals/{requestId:long}/review", async (long requestId,
+    ReviewBorrowRequest input, HttpRequest request, SessionService sessions,
+    IConfiguration configuration, CancellationToken ct) =>
+{
+    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    var actor = sessions.Validate(ReadBearerToken(request));
+    if (actor is null) return Results.Unauthorized();
+    if (actor.Role is not ("Staff" or "Admin")) return Results.StatusCode(403);
+    if (requestId <= 0 || (input.Note?.Length ?? 0) > 500 ||
+        (!input.Approve && string.IsNullOrWhiteSpace(input.Note)))
+        return Results.BadRequest(new { message = "Từ chối phải có lý do; ghi chú tối đa 500 ký tự." });
+    try
+    {
+        var cs = configuration.GetConnectionString("AivenPostgres")
+            ?? throw new InvalidOperationException("Database is not configured");
+        await using var db = new NpgsqlConnection(cs);
+        await db.OpenAsync(ct);
+        await using var tx = await db.BeginTransactionAsync(ct);
+        long detailId;
+        await using (var find = new NpgsqlCommand(@"
+            SELECT borrow_detail_id FROM public.borrow_renewal_requests WHERE request_id=@id;", db, tx))
+        {
+            find.Parameters.AddWithValue("id", requestId);
+            var result = await find.ExecuteScalarAsync(ct);
+            if (result is null) return Results.NotFound();
+            detailId = Convert.ToInt64(result);
+        }
+        DateTime oldDue; bool open;
+        await using (var detail = new NpgsqlCommand(@"
+            SELECT due_at,closed_at IS NULL FROM public.borrow_details
+            WHERE borrow_detail_id=@id FOR UPDATE;", db, tx))
+        {
+            detail.Parameters.AddWithValue("id", detailId);
+            await using var rd = await detail.ExecuteReaderAsync(ct);
+            if (!await rd.ReadAsync(ct)) return Results.NotFound();
+            oldDue = rd.GetDateTime(0); open = rd.GetBoolean(1);
+        }
+        await using (var pending = new NpgsqlCommand(@"
+            SELECT status FROM public.borrow_renewal_requests
+            WHERE request_id=@id FOR UPDATE;", db, tx))
+        {
+            pending.Parameters.AddWithValue("id", requestId);
+            if ((await pending.ExecuteScalarAsync(ct)) as string != "pending")
+                return Results.Conflict(new { message = "Yêu cầu không còn chờ duyệt." });
+        }
+        if (!input.Approve)
+        {
+            await using var reject = new NpgsqlCommand(@"
+                UPDATE public.borrow_renewal_requests SET status='rejected',
+                    reviewed_by_user_id=@actor,reviewed_at=NOW(),review_note=@note
+                WHERE request_id=@id;", db, tx);
+            reject.Parameters.AddWithValue("actor", actor.UserId);
+            reject.Parameters.AddWithValue("id", requestId);
+            reject.Parameters.AddWithValue("note", input.Note!.Trim());
+            await reject.ExecuteNonQueryAsync(ct);
+            await tx.CommitAsync(ct);
+            return Results.Ok(new { message = "Đã từ chối yêu cầu gia hạn." });
+        }
+        if (!open) return Results.Conflict(new { message = "Cuốn đã trả/đóng; không thể gia hạn." });
+        long policyId; int max, days; bool allowLate;
+        await using (var policy = new NpgsqlCommand(@"
+            SELECT policy_version_id,max_renewals,renewal_days,allow_overdue_renewal_approval
+            FROM public.borrowing_policy_versions WHERE effective_at <= NOW()
+            ORDER BY effective_at DESC LIMIT 1;", db, tx))
+        {
+            await using var rd = await policy.ExecuteReaderAsync(ct);
+            if (!await rd.ReadAsync(ct)) return Results.Conflict(new { message = "Chưa có chính sách gia hạn hiệu lực." });
+            policyId = rd.GetInt64(0); max = rd.GetInt32(1); days = rd.GetInt32(2); allowLate = rd.GetBoolean(3);
+        }
+        if (oldDue < DateTime.UtcNow && !allowLate)
+            return Results.Conflict(new { message = "Cuốn đã quá hạn; chính sách không cho duyệt gia hạn." });
+        await using (var count = new NpgsqlCommand(@"
+            SELECT COUNT(*) FROM public.borrow_renewals WHERE borrow_detail_id=@id;", db, tx))
+        {
+            count.Parameters.AddWithValue("id", detailId);
+            if (Convert.ToInt64(await count.ExecuteScalarAsync(ct)) >= max)
+                return Results.Conflict(new { message = "Cuốn đã hết lượt gia hạn theo chính sách mới nhất." });
+        }
+        // Tính ngày ở Việt Nam (UTC+07, không DST), chốt cuối ngày 23:59:59.
+        // Gia hạn bình thường từ hạn hiện tại; nếu được duyệt quá hạn thì từ hôm duyệt.
+        DateTime baseUtc = oldDue > DateTime.UtcNow ? oldDue.ToUniversalTime() : DateTime.UtcNow;
+        DateTime vietnamEnd = baseUtc.AddHours(7).Date.AddDays(days)
+            .AddHours(23).AddMinutes(59).AddSeconds(59);
+        DateTime newDue = DateTime.SpecifyKind(vietnamEnd.AddHours(-7), DateTimeKind.Utc);
+        await using (var renewal = new NpgsqlCommand(@"
+            INSERT INTO public.borrow_renewals(borrow_detail_id,request_id,old_due_at,new_due_at,
+                renewed_by_user_id,policy_version_id)
+            VALUES(@detail,@request,@old,@new,@actor,@policy);", db, tx))
+        {
+            renewal.Parameters.AddWithValue("detail", detailId);
+            renewal.Parameters.AddWithValue("request", requestId);
+            renewal.Parameters.AddWithValue("old", NpgsqlDbType.TimestampTz, oldDue.ToUniversalTime());
+            renewal.Parameters.AddWithValue("new", NpgsqlDbType.TimestampTz, newDue.ToUniversalTime());
+            renewal.Parameters.AddWithValue("actor", actor.UserId);
+            renewal.Parameters.AddWithValue("policy", policyId);
+            await renewal.ExecuteNonQueryAsync(ct);
+        }
+        await using (var changeDue = new NpgsqlCommand(@"
+            UPDATE public.borrow_details SET due_at=@due
+            WHERE borrow_detail_id=@id AND closed_at IS NULL;", db, tx))
+        {
+            changeDue.Parameters.AddWithValue("due", NpgsqlDbType.TimestampTz, newDue.ToUniversalTime());
+            changeDue.Parameters.AddWithValue("id", detailId);
+            if (await changeDue.ExecuteNonQueryAsync(ct) != 1)
+                throw new InvalidOperationException("Loan closed during renewal");
+        }
+        await using (var approve = new NpgsqlCommand(@"
+            UPDATE public.borrow_renewal_requests SET status='approved',
+                reviewed_by_user_id=@actor,reviewed_at=NOW(),review_note=@note,
+                applied_policy_version_id=@policy WHERE request_id=@id AND status='pending';", db, tx))
+        {
+            approve.Parameters.AddWithValue("actor", actor.UserId);
+            approve.Parameters.AddWithValue("id", requestId);
+            approve.Parameters.AddWithValue("note", (object?)input.Note?.Trim() ?? DBNull.Value);
+            approve.Parameters.AddWithValue("policy", policyId);
+            if (await approve.ExecuteNonQueryAsync(ct) != 1)
+                throw new InvalidOperationException("Renewal request changed concurrently");
+        }
+        await tx.CommitAsync(ct);
+        return Results.Ok(new { message = $"Đã gia hạn thêm {days} ngày. Tải lại phiếu mượn để xem hạn mới." });
+    }
+    catch (PostgresException ex) when (ex.SqlState is PostgresErrorCodes.UndefinedTable or PostgresErrorCodes.UndefinedColumn)
+    { return Results.Conflict(new { message = "Thiếu schema gia hạn DB-11. Kiểm tra Aiven." }); }
+    catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UniqueViolation)
+    { return Results.Conflict(new { message = "Yêu cầu gia hạn đã được xử lý." }); }
+    catch (OperationCanceledException) when (ct.IsCancellationRequested) { return Results.StatusCode(499); }
+    catch (Exception ex)
+    {
+        app.Logger.LogError("Review renewal failed: {Type}", ex.GetType().Name);
+        return Results.Json(new { message = "Không duyệt được yêu cầu gia hạn." }, statusCode: 503);
+    }
+});
+
+app.MapPost("/api/loan-renewals/{requestId:long}/cancel", async (long requestId,
+    HttpRequest request, SessionService sessions, IConfiguration configuration, CancellationToken ct) =>
+{
+    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    var actor = sessions.Validate(ReadBearerToken(request));
+    if (actor is null) return Results.Unauthorized();
+    if (actor.Role != "Reader") return Results.StatusCode(403);
+    if (requestId <= 0) return Results.BadRequest(new { message = "Mã yêu cầu không hợp lệ." });
+    try
+    {
+        var cs = configuration.GetConnectionString("AivenPostgres")
+            ?? throw new InvalidOperationException("Database is not configured");
+        await using var db = new NpgsqlConnection(cs);
+        await db.OpenAsync(ct);
+        await using var cmd = new NpgsqlCommand(@"
+            UPDATE public.borrow_renewal_requests SET status='cancelled'
+            WHERE request_id=@id AND requested_by_user_id=@reader AND status='pending'
+            RETURNING request_id;", db);
+        cmd.Parameters.AddWithValue("id", requestId);
+        cmd.Parameters.AddWithValue("reader", actor.UserId);
+        var result = await cmd.ExecuteScalarAsync(ct);
+        if (result is null) return Results.Conflict(new { message = "Không tìm thấy yêu cầu đang chờ của bạn." });
+        return Results.Ok(new { message = "Đã hủy yêu cầu gia hạn; hạn trả không thay đổi." });
+    }
+    catch (PostgresException ex) when (ex.SqlState is PostgresErrorCodes.UndefinedTable or PostgresErrorCodes.UndefinedColumn)
+    { return Results.Conflict(new { message = "Thiếu schema gia hạn DB-11." }); }
+    catch (OperationCanceledException) when (ct.IsCancellationRequested) { return Results.StatusCode(499); }
+    catch (Exception ex)
+    {
+        app.Logger.LogError("Cancel renewal failed: {Type}", ex.GetType().Name);
+        return Results.Json(new { message = "Không hủy được yêu cầu gia hạn." }, statusCode: 503);
+    }
+});
+
 app.MapPost("/api/borrow-requests/{requestId:long}/cancel", async (
     long requestId, HttpRequest request, SessionService sessions, IConfiguration config, CancellationToken ct) =>
 {
@@ -2631,7 +3034,9 @@ public sealed record RegisterStartRequest(
     string? FullName,
     string? Username,
     string? Phone,
-    string? Password);
+    string? Password,
+    string? GuestClaimCode);
+public sealed record GuestPreviewRequest(string? GuestClaimCode);
 public sealed record RegisterConfirmRequest(Guid RequestId, string? Otp);
 
 public sealed record AddCopyRequest(string? CopyCode, string? ShelfLocation);
@@ -2708,6 +3113,7 @@ public sealed class ReaderProfileEditOtpStore
     }
 }
 
+public sealed record GuestClaimIssueRequest(bool StaffVerifiedIdentity);
 public sealed record ReaderBorrowAccessRequest(bool Block, string? Reason);
 public sealed record CheckoutLoanRequest(string? ReaderUsername, string? CopyCode, int LoanDays);
 
@@ -2747,3 +3153,5 @@ public sealed record WalkInBorrowRequest(long? ExistingReaderUserId, string? Ful
     string? Phone, string? CitizenId, bool StaffVerifiedIdentity,
     List<NewBorrowRequestItem> Items, string? Note);
 
+
+public sealed record NewLoanRenewalRequest(long BorrowDetailId);

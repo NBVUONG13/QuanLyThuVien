@@ -133,6 +133,59 @@ namespace QuanLyThuVien.Services
             return SendActionAsync(BaseUrl + "/" + borrowDetailId + "/return", token, "{}");
         }
 
+
+        // Step 66 — Reader/Staff share renewal requests API, without touching loan checkout.
+        public async Task<LoanRenewalListResult> GetLoanRenewalsAsync(string token)
+        {
+            try
+            {
+                using (var req = NewRequest(HttpMethod.Get, "http://127.0.0.1:5082/api/loan-renewals", token))
+                using (var response = await Http.SendAsync(req))
+                {
+                    var json = await response.Content.ReadAsStringAsync();
+                    if (!response.IsSuccessStatusCode)
+                        return new LoanRenewalListResult { Message = Error(json, response.StatusCode) };
+                    var parsed = Parse<LoanRenewalListResponse>(json);
+                    return new LoanRenewalListResult
+                    {
+                        IsSuccess = true,
+                        Requests = parsed != null && parsed.Requests != null ? parsed.Requests : new List<LoanRenewalItem>()
+                    };
+                }
+            }
+            catch (Exception ex) when (ex is HttpRequestException || ex is TaskCanceledException ||
+                                       ex is SerializationException || ex is InvalidOperationException)
+            { return new LoanRenewalListResult { Message = "Không tải được danh sách gia hạn." }; }
+        }
+
+        public Task<LoanActionResult> RequestLoanRenewalAsync(string token, long borrowDetailId)
+        {
+            return SendActionAsync("http://127.0.0.1:5082/api/loan-renewals/request", token,
+                Serialize(new NewRenewalDto { BorrowDetailId = borrowDetailId }));
+        }
+
+        public Task<LoanActionResult> ReviewLoanRenewalAsync(string token, long requestId, bool approve, string note)
+        {
+            return SendActionAsync("http://127.0.0.1:5082/api/loan-renewals/" + requestId + "/review",
+                token, Serialize(new ReviewRequestDto { Approve = approve, Note = note }));
+        }
+
+        public Task<LoanActionResult> CancelLoanRenewalAsync(string token, long requestId)
+        {
+            return SendActionAsync("http://127.0.0.1:5082/api/loan-renewals/" + requestId + "/cancel", token, "{}");
+        }
+
+        [DataContract]
+        private sealed class NewRenewalDto
+        {
+            [DataMember(Name = "borrowDetailId")] public long BorrowDetailId { get; set; }
+        }
+        [DataContract]
+        private sealed class LoanRenewalListResponse
+        {
+            [DataMember(Name = "requests")] public List<LoanRenewalItem> Requests { get; set; }
+        }
+
         private static async Task<LoanActionResult> SendActionAsync(string url, string token, string body)
         {
             try
@@ -375,6 +428,27 @@ namespace QuanLyThuVien.Services
         {
             [DataMember(Name = "message")] public string Message { get; set; }
         }
+    }
+
+    [DataContract]
+    public sealed class LoanRenewalItem
+    {
+        [DataMember(Name = "requestId")] public long RequestId { get; set; }
+        [DataMember(Name = "borrowDetailId")] public long BorrowDetailId { get; set; }
+        [DataMember(Name = "readerUsername")] public string ReaderUsername { get; set; }
+        [DataMember(Name = "copyCode")] public string CopyCode { get; set; }
+        [DataMember(Name = "bookTitle")] public string BookTitle { get; set; }
+        [DataMember(Name = "status")] public string Status { get; set; }
+        [DataMember(Name = "requestedAt")] public string RequestedAt { get; set; }
+        [DataMember(Name = "currentDueAt")] public string CurrentDueAt { get; set; }
+        [DataMember(Name = "reviewNote")] public string ReviewNote { get; set; }
+        [DataMember(Name = "isOpen")] public bool IsOpen { get; set; }
+    }
+    public sealed class LoanRenewalListResult
+    {
+        public bool IsSuccess { get; set; }
+        public string Message { get; set; }
+        public List<LoanRenewalItem> Requests { get; set; } = new List<LoanRenewalItem>();
     }
 
     [DataContract]

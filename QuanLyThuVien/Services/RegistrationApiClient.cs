@@ -16,14 +16,48 @@ namespace QuanLyThuVien.Services
     {
         private const string StartUrl = "http://127.0.0.1:5082/api/auth/register/start";
         private const string ConfirmUrl = "http://127.0.0.1:5082/api/auth/register/confirm";
+        private const string PreviewUrl = "http://127.0.0.1:5082/api/auth/register/guest-preview";
 
         private static readonly HttpClient Http = new HttpClient
         {
             Timeout = TimeSpan.FromSeconds(30)
         };
 
+        public async Task<GuestPreviewResult> PreviewGuestAsync(
+            string guestClaimCode,
+            CancellationToken cancellationToken = default(CancellationToken))
+        {
+            if (string.IsNullOrWhiteSpace(guestClaimCode) ||
+                !System.Text.RegularExpressions.Regex.IsMatch(guestClaimCode.Trim(), @"\A[0-9]{8}\z"))
+                return GuestPreviewResult.Failure("Nhập đúng mã liên kết 8 số do Staff cấp.");
+            try
+            {
+                var data = new GuestPreviewRequest
+                {
+                    GuestClaimCode = guestClaimCode.Trim()
+                };
+                using (var response = await SendAsync(PreviewUrl, data, cancellationToken)
+                    .ConfigureAwait(false))
+                {
+                    string body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+                    if (!response.IsSuccessStatusCode)
+                        return GuestPreviewResult.Failure(GetErrorMessage(response, body));
+                    var result = Deserialize<GuestPreviewResponse>(body);
+                    if (result == null || result.Message != "guest_preview_ready_dev_only" ||
+                        string.IsNullOrWhiteSpace(result.FullName))
+                        return GuestPreviewResult.Failure("API trả về hồ sơ Guest không hợp lệ.");
+                    return GuestPreviewResult.Success(result.FullName, result.Phone ?? "");
+                }
+            }
+            catch (HttpRequestException) { return GuestPreviewResult.Failure("Không kết nối được API."); }
+            catch (TaskCanceledException) { return GuestPreviewResult.Failure("Hết thời gian tải hồ sơ."); }
+            catch (SerializationException) { return GuestPreviewResult.Failure("JSON hồ sơ Guest không hợp lệ."); }
+            catch (FormatException) { return GuestPreviewResult.Failure("Dữ liệu hồ sơ Guest không hợp lệ."); }
+        }
+
         public async Task<RegistrationStartResult> StartAsync(
             string fullName, string username, string phone, string password,
+            string guestClaimCode,
             CancellationToken cancellationToken = default(CancellationToken))
         {
             if (string.IsNullOrWhiteSpace(fullName) ||
@@ -39,7 +73,8 @@ namespace QuanLyThuVien.Services
                 FullName = fullName.Trim(),
                 Username = username.Trim(),
                 Phone = phone.Trim(),
-                Password = password
+                Password = password,
+                GuestClaimCode = guestClaimCode == null ? "" : guestClaimCode.Trim()
             };
 
             try
@@ -182,12 +217,27 @@ namespace QuanLyThuVien.Services
         }
 
         [DataContract]
+        private sealed class GuestPreviewRequest
+        {
+            [DataMember(Name = "guestClaimCode")] public string GuestClaimCode { get; set; }
+        }
+
+        [DataContract]
+        private sealed class GuestPreviewResponse
+        {
+            [DataMember(Name = "message")] public string Message { get; set; }
+            [DataMember(Name = "fullName")] public string FullName { get; set; }
+            [DataMember(Name = "phone")] public string Phone { get; set; }
+        }
+
+        [DataContract]
         private sealed class StartRequest
         {
             [DataMember(Name = "fullName")] public string FullName { get; set; }
             [DataMember(Name = "username")] public string Username { get; set; }
             [DataMember(Name = "phone")] public string Phone { get; set; }
             [DataMember(Name = "password")] public string Password { get; set; }
+            [DataMember(Name = "guestClaimCode")] public string GuestClaimCode { get; set; }
         }
 
         [DataContract]
@@ -270,5 +320,21 @@ namespace QuanLyThuVien.Services
         {
             return new RegistrationConfirmResult { IsSuccess = false, Message = message };
         }
+    }
+}
+
+namespace QuanLyThuVien.Services
+{
+    public sealed class GuestPreviewResult
+    {
+        public bool IsSuccess { get; private set; }
+        public string FullName { get; private set; }
+        public string Phone { get; private set; }
+        public string Message { get; private set; }
+
+        internal static GuestPreviewResult Success(string fullName, string phone) =>
+            new GuestPreviewResult { IsSuccess = true, FullName = fullName, Phone = phone };
+        internal static GuestPreviewResult Failure(string message) =>
+            new GuestPreviewResult { IsSuccess = false, Message = message };
     }
 }

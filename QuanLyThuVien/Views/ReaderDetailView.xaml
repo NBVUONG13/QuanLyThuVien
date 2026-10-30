@@ -88,6 +88,27 @@
                 </DockPanel>
             </Border>
 
+            <!-- STEP 65: staff-assisted activation. No password is entered by Staff. -->
+            <Border DataContext="{Binding Reader}" Background="#EEF6FF" BorderBrush="#B9D7F0"
+                    BorderThickness="1" CornerRadius="10" Padding="17" Margin="0,0,0,16"
+                    Visibility="{Binding SelectedReader.IsGuest, Converter={StaticResource ReaderDetailsBoolToVisibility}}">
+                <StackPanel>
+                    <TextBlock Text="LIÊN KẾT GUEST THÀNH READER" FontWeight="Bold" FontSize="17" Foreground="#1C4C7D" />
+                    <TextBlock Text="Chỉ cấp mã khi chính chủ đến quầy và Staff đã kiểm tra giấy tờ gốc hoặc kiểm chứng quyền sở hữu liên hệ thực tế. OTP console không phải SMS thật."
+                               Foreground="#40566F" TextWrapping="Wrap" Margin="0,8,0,10" />
+                    <CheckBox Content="Tôi đã trực tiếp xác minh đúng chủ hồ sơ Guest này"
+                              IsChecked="{Binding GuestIdentityChecked, Mode=TwoWay}" FontWeight="SemiBold" />
+                    <Button Content="CẤP MÃ LIÊN KẾT DÙNG 1 LẦN" Command="{Binding IssueGuestClaimCommand}"
+                            Background="#286BB6" Foreground="White" FontWeight="SemiBold"
+                            BorderThickness="0" Padding="14,10" HorizontalAlignment="Left" Margin="0,10,0,8" />
+                    <TextBlock Text="Mã Guest cần nhập trên trang đăng ký:" Foreground="#40566F" />
+                    <TextBlock Text="{Binding SelectedReader.Username}" FontSize="17" FontWeight="Bold" Foreground="#1C4C7D" />
+                    <TextBlock Text="Mã liên kết:" Foreground="#40566F" Margin="0,8,0,0" />
+                    <TextBlock Text="{Binding GuestClaimCode}" FontSize="23" FontWeight="Bold" Foreground="#1C4C7D" />
+                    <TextBlock Text="{Binding GuestClaimMessage}" TextWrapping="Wrap" Foreground="#40566F" Margin="0,8,0,0" />
+                </StackPanel>
+            </Border>
+
             <!-- Detailed data, including fines and borrow restrictions, is shown ONLY on successful API load. -->
             <StackPanel DataContext="{Binding Reader}"
                         Visibility="{Binding DetailsLoaded, Converter={StaticResource ReaderDetailsBoolToVisibility}}">
