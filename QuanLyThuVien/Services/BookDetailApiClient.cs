@@ -168,9 +168,12 @@ namespace QuanLyThuVien.Services
                     return Deserialize<T>(json) ?? new T { Error = "API trả về dữ liệu trống." };
                 }
             }
-            catch (Exception ex) when (ex is HttpRequestException || ex is TaskCanceledException ||
-                                       ex is SerializationException || ex is System.Xml.XmlException)
-            { return new T { Error = "Không kết nối được hoặc không đọc được dữ liệu từ API." }; }
+            catch (HttpRequestException)
+            { return new T { Error = "Không kết nối được http://127.0.0.1:5082. Hãy chạy SmartLibrary.Api." }; }
+            catch (TaskCanceledException)
+            { return new T { Error = "Yêu cầu tải kho quá thời gian 20 giây. Kiểm tra API/Aiven." }; }
+            catch (Exception ex)
+            { return new T { Error = "Lỗi phân tích dữ liệu kho (" + ex.GetType().Name + ")." }; }
         }
 
         private async Task<InventoryActionResponse> ChangeInventoryAsync<T>(string token, HttpMethod method,
@@ -200,7 +203,9 @@ namespace QuanLyThuVien.Services
         {
             if (code == HttpStatusCode.Unauthorized) return "Phiên hết hạn, đăng nhập lại.";
             if (code == HttpStatusCode.Forbidden) return "Tài khoản không có quyền quản lý kho.";
-            if (code == HttpStatusCode.NotFound) return "Không tìm thấy dữ liệu hoặc endpoint chưa được đăng ký.";
+            if (code == HttpStatusCode.NotFound) return "HTTP 404: API kho chưa được đăng ký; kiểm tra app.MapBookInventoryEndpoints().";
+            if (code == HttpStatusCode.ServiceUnavailable)
+                return "HTTP 503: Backend không đọc được kho từ PostgreSQL. Xem console SmartLibrary.Api để biết SQLSTATE.";
             try
             {
                 var item = Deserialize<InventoryActionResponse>(json);
@@ -292,6 +297,8 @@ namespace QuanLyThuVien.Services
         [DataMember(Name = "shelfLocation")] public string ShelfLocation { get; set; }
     }
     // DTOs live beside BookDetailApiClient to keep step 77 at four source files.
+    // A data-contract-derived type must also have a serializable base type.
+    [DataContract]
     public class InventoryResponseBase
     {
         public string Error { get; set; }

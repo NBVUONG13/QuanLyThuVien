@@ -784,19 +784,39 @@ namespace QuanLyThuVien.ViewModels
         {
             if (!CanManage || InventoryBusy) return;
             InventoryBusy = true;
+            InventoryMessage = "Đang tải danh sách kho từ API...";
             try
             {
                 var result = await _detailApi.InventoryBooksAsync(_token);
-                if (!string.IsNullOrWhiteSpace(result.Error)) { InventoryMessage = result.Error; return; }
-                var selectedId = FormBookId;
+                if (result == null)
+                {
+                    InventoryMessage = "API kho không trả kết quả. Kiểm tra kết nối 127.0.0.1:5082.";
+                    return;
+                }
+                if (!string.IsNullOrWhiteSpace(result.Error))
+                {
+                    InventoryMessage = "Tải kho thất bại: " + result.Error;
+                    return;
+                }
+                if (result.Books == null)
+                {
+                    InventoryMessage = "API trả về HTTP 200 nhưng thiếu danh sách 'books'. Kiểm tra BookInventoryEndpoints.";
+                    return;
+                }
+                long selectedId = FormBookId;
                 Replace(InventoryBooks, result.Books);
                 _inventoryLoaded = true;
-                // Set the field without retriggering a network load. The form remains intact.
+                // Preserve selected row and form without initiating another API load.
                 _selectedInventoryBook = InventoryBooks.FirstOrDefault(x => x.BookId == selectedId);
                 Notify(nameof(SelectedInventoryBook));
-                InventoryMessage = "Kho hiện có " + InventoryBooks.Count + " đầu sách. Chọn một hàng để sửa hoặc nhập thêm cuốn.";
+                InventoryMessage = InventoryBooks.Count == 0
+                    ? "API đã tải nhưng database không có đầu sách nào trong danh sách kho."
+                    : "Đã tải " + InventoryBooks.Count + " đầu sách từ kho thật. Chọn một hàng để sửa hoặc nhập cuốn.";
             }
-            catch (Exception) { InventoryMessage = "Không tải được kho sách."; }
+            catch (Exception ex)
+            {
+                InventoryMessage = "Lỗi đọc kho trong WPF (" + ex.GetType().Name + "). Kiểm tra cửa sổ Output/API.";
+            }
             finally { InventoryBusy = false; }
         }
         private async Task LoadInventoryBookAsync(long bookId)

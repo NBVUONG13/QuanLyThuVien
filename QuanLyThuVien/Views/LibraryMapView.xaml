@@ -64,7 +64,7 @@
                         <Rectangle Width="114" Height="71" Canvas.Left="780" Canvas.Top="105" RadiusX="10" RadiusY="10" Fill="#D2B18D" Stroke="#96785A" StrokeThickness="3"/>
                         <TextBlock Text="Đọc • Nghiên cứu" Canvas.Left="235" Canvas.Top="195" Foreground="#867C6C" FontSize="13"/>
                         <TextBlock Text="LỐI ĐI GIỮA CÁC KỆ" Canvas.Left="375" Canvas.Top="489" Foreground="#988F7F" FontWeight="Bold" FontSize="12"/>
-                        <Border Width="76" Height="200" Canvas.Left="65" Canvas.Top="265" Background="#B48856" BorderBrush="#8A6845" BorderThickness="3" CornerRadius="5">
+                        <Border Width="76" Height="200" Canvas.Left="65" Canvas.Top="265" Background="#B48856" BorderBrush="#8A6845" BorderThickness="3" CornerRadius="5" Tag="K1" Cursor="Hand" MouseLeftButtonUp="ShelfClick" ToolTip="Chọn kệ K1 khi nhập kho">
                             <Grid>
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="26"/>
@@ -80,7 +80,7 @@
                                 <Border Grid.Row="3" Background="#EBD4AF" BorderBrush="#9F784A" BorderThickness="0,0,0,4" Margin="7,4"/>
                             </Grid>
                         </Border>
-                        <Border Width="76" Height="200" Canvas.Left="210" Canvas.Top="265" Background="#B48856" BorderBrush="#8A6845" BorderThickness="3" CornerRadius="5">
+                        <Border Width="76" Height="200" Canvas.Left="210" Canvas.Top="265" Background="#B48856" BorderBrush="#8A6845" BorderThickness="3" CornerRadius="5" Tag="K2" Cursor="Hand" MouseLeftButtonUp="ShelfClick" ToolTip="Chọn kệ K2 khi nhập kho">
                             <Grid>
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="26"/>
@@ -96,7 +96,7 @@
                                 <Border Grid.Row="3" Background="#EBD4AF" BorderBrush="#9F784A" BorderThickness="0,0,0,4" Margin="7,4"/>
                             </Grid>
                         </Border>
-                        <Border Width="76" Height="200" Canvas.Left="355" Canvas.Top="265" Background="#B48856" BorderBrush="#8A6845" BorderThickness="3" CornerRadius="5">
+                        <Border Width="76" Height="200" Canvas.Left="355" Canvas.Top="265" Background="#B48856" BorderBrush="#8A6845" BorderThickness="3" CornerRadius="5" Tag="K3" Cursor="Hand" MouseLeftButtonUp="ShelfClick" ToolTip="Chọn kệ K3 khi nhập kho">
                             <Grid>
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="26"/>
@@ -112,7 +112,7 @@
                                 <Border Grid.Row="3" Background="#EBD4AF" BorderBrush="#9F784A" BorderThickness="0,0,0,4" Margin="7,4"/>
                             </Grid>
                         </Border>
-                        <Border Width="76" Height="200" Canvas.Left="500" Canvas.Top="265" Background="#B48856" BorderBrush="#8A6845" BorderThickness="3" CornerRadius="5">
+                        <Border Width="76" Height="200" Canvas.Left="500" Canvas.Top="265" Background="#B48856" BorderBrush="#8A6845" BorderThickness="3" CornerRadius="5" Tag="K4" Cursor="Hand" MouseLeftButtonUp="ShelfClick" ToolTip="Chọn kệ K4 khi nhập kho">
                             <Grid>
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="26"/>
@@ -128,7 +128,7 @@
                                 <Border Grid.Row="3" Background="#EBD4AF" BorderBrush="#9F784A" BorderThickness="0,0,0,4" Margin="7,4"/>
                             </Grid>
                         </Border>
-                        <Border Width="76" Height="200" Canvas.Left="645" Canvas.Top="265" Background="#B48856" BorderBrush="#8A6845" BorderThickness="3" CornerRadius="5">
+                        <Border Width="76" Height="200" Canvas.Left="645" Canvas.Top="265" Background="#B48856" BorderBrush="#8A6845" BorderThickness="3" CornerRadius="5" Tag="K5" Cursor="Hand" MouseLeftButtonUp="ShelfClick" ToolTip="Chọn kệ K5 khi nhập kho">
                             <Grid>
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="26"/>
@@ -144,7 +144,7 @@
                                 <Border Grid.Row="3" Background="#EBD4AF" BorderBrush="#9F784A" BorderThickness="0,0,0,4" Margin="7,4"/>
                             </Grid>
                         </Border>
-                        <Border Width="76" Height="200" Canvas.Left="790" Canvas.Top="265" Background="#B48856" BorderBrush="#8A6845" BorderThickness="3" CornerRadius="5">
+                        <Border Width="76" Height="200" Canvas.Left="790" Canvas.Top="265" Background="#B48856" BorderBrush="#8A6845" BorderThickness="3" CornerRadius="5" Tag="K6" Cursor="Hand" MouseLeftButtonUp="ShelfClick" ToolTip="Chọn kệ K6 khi nhập kho">
                             <Grid>
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="26"/>
