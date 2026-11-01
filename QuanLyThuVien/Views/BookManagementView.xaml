@@ -327,6 +327,51 @@
                                        FontSize="15" Margin="0,22,0,7" />
                             <TextBlock Text="{Binding DetailDescription}" TextWrapping="Wrap"
                                        FontSize="13" LineHeight="20" Foreground="#4F4564" />
+                            <!-- STEP 70: Ratings belong to the existing book detail popup, not a new page. -->
+                            <Expander Margin="0,18,0,0" IsExpanded="False" Background="#F7F5FB">
+                                <Expander.Header>
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="ĐÁNH GIÁ SÁCH" FontSize="14" FontWeight="Bold"
+                                                   Foreground="#44345F" Margin="0,0,12,0" />
+                                        <TextBlock Text="{Binding RatingSummary}" Foreground="#715E89" FontSize="13" />
+                                    </StackPanel>
+                                </Expander.Header>
+                                <StackPanel Margin="14,12,14,14">
+                                    <TextBlock Text="{Binding RatingMessage}" Foreground="#855073"
+                                               TextWrapping="Wrap" Margin="0,0,0,9" />
+                                    <StackPanel Visibility="{Binding CanRateBook, Converter={StaticResource BoolVisibility}}">
+                                        <TextBlock Text="ĐÁNH GIÁ CỦA BẠN" Foreground="#44345F" FontWeight="SemiBold" />
+                                        <StackPanel Orientation="Horizontal" Margin="0,7,0,8">
+                                            <TextBlock Text="Số sao (1–5)" VerticalAlignment="Center" Margin="0,0,10,0" />
+                                            <ComboBox Width="90" Height="30" ItemsSource="{Binding RatingScoreOptions}"
+                                                      SelectedItem="{Binding SelectedRatingScore, Mode=TwoWay}" />
+                                        </StackPanel>
+                                        <TextBox Text="{Binding RatingComment, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                 MinHeight="64" MaxHeight="110" AcceptsReturn="True" MaxLength="1000"
+                                                 VerticalScrollBarVisibility="Auto" TextWrapping="Wrap"
+                                                 Padding="9,7" ToolTip="Nhận xét tối đa 1000 ký tự (không bắt buộc)" />
+                                        <Button Content="LƯU / CẬP NHẬT ĐÁNH GIÁ" Command="{Binding SaveRatingCommand}"
+                                                Background="#69519C" Foreground="White" BorderThickness="0"
+                                                HorizontalAlignment="Left" Padding="15,7" Margin="0,9,0,12" />
+                                    </StackPanel>
+                                    <TextBlock Text="NHẬN XÉT GẦN ĐÂY (ẨN DANH)" FontWeight="SemiBold" Foreground="#44345F"
+                                               Margin="0,4,0,8" />
+                                    <ItemsControl ItemsSource="{Binding RatingComments}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Border BorderBrush="#E5DFEE" BorderThickness="0,0,0,1" Padding="0,6">
+                                                    <StackPanel>
+                                                        <TextBlock Text="{Binding ScoreLabel}" FontWeight="SemiBold"
+                                                                   Foreground="#645184" FontSize="12" />
+                                                        <TextBlock Text="{Binding Comment}" TextWrapping="Wrap"
+                                                                   Foreground="#4F4564" FontSize="13" Margin="0,4,0,0" />
+                                                    </StackPanel>
+                                                </Border>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </StackPanel>
+                            </Expander>
                             <!-- Staff/Admin management stays within the SAME dialog. -->
                             <StackPanel Visibility="{Binding CanManage, Converter={StaticResource BoolVisibility}}"
                                         Margin="0,20,0,0">
@@ -338,7 +383,7 @@
                                              ToolTip="Vị trí kệ" />
                                     <Button Content="THÊM CUỐN" Height="31" Width="120" Command="{Binding AddCopyCommand}" />
                                 </StackPanel>
-                                <DataGrid ItemsSource="{Binding Copies}" IsReadOnly="True"
+                                <DataGrid ItemsSource="{Binding Copies}" SelectedItem="{Binding SelectedCopy, Mode=TwoWay}" IsReadOnly="True"
                                           AutoGenerateColumns="False" Height="160" CanUserAddRows="False"
                                           ScrollViewer.HorizontalScrollBarVisibility="Auto">
                                     <DataGrid.Columns>
@@ -347,10 +392,31 @@
                                         <DataGridTextColumn Header="Vị trí kệ" Binding="{Binding ShelfLocation}" Width="*" MinWidth="120" />
                                     </DataGrid.Columns>
                                 </DataGrid>
+                                <!-- STEP 69: Choose a real copy, then assign the precise shelf/level/slot. -->
+                                <TextBlock Text="GÁN VỊ TRÍ CUỐN ĐÃ CÓ" FontWeight="Bold" Foreground="#44345F"
+                                           Margin="0,12,0,5" />
+                                <TextBlock Text="Chọn một mã cuốn ở bảng trên. Không tạo cuốn mới."
+                                           Foreground="#756884" FontSize="12" />
+                                <StackPanel Orientation="Horizontal" Margin="0,8,0,5">
+                                    <TextBlock Text="Kệ" VerticalAlignment="Center" Margin="0,0,5,0"/>
+                                    <ComboBox Width="75" ItemsSource="{Binding ShelfOptions}" SelectedItem="{Binding LocationShelf, Mode=TwoWay}"/>
+                                    <TextBlock Text="Tầng" VerticalAlignment="Center" Margin="12,0,5,0"/>
+                                    <ComboBox Width="65" ItemsSource="{Binding TierOptions}" SelectedItem="{Binding LocationTier, Mode=TwoWay}"/>
+                                    <TextBlock Text="Ô" VerticalAlignment="Center" Margin="12,0,5,0"/>
+                                    <ComboBox Width="75" ItemsSource="{Binding SlotOptions}" SelectedItem="{Binding LocationSlot, Mode=TwoWay}"/>
+                                    <Button Content="LƯU VỊ TRÍ" Command="{Binding SaveCopyLocationCommand}" Width="125"
+                                            Margin="10,0,0,0" Background="#2563EB" Foreground="White" BorderThickness="0"/>
+                                </StackPanel>
+                                <TextBlock Text="{Binding LocationMessage}" TextWrapping="Wrap"
+                                           Foreground="#56506A" FontSize="12" Margin="0,6,0,3"/>
                             </StackPanel>
                         </StackPanel>
                     </ScrollViewer>
                     <DockPanel Grid.Row="2" Background="#F6F3FA" LastChildFill="False">
+                        <Button Content="⌖  CHỈ ĐƯỜNG ĐẾN KỆ" Command="{Binding RouteToBookCommand}"
+                                Height="34" MinWidth="195" Padding="12,5" Margin="8,8,3,8"
+                                Background="#2563EB" Foreground="White" BorderThickness="0"
+                                DockPanel.Dock="Left" />
                         <Button Content="ĐÓNG CHI TIẾT" Command="{Binding CloseDetailCommand}"
                                 Height="34" Width="160" Margin="0,8,16,8" DockPanel.Dock="Right" />
                         <!-- Reader sends a REQUEST, not a direct checkout. -->

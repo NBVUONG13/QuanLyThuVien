@@ -350,6 +350,48 @@ namespace QuanLyThuVien.Services
             [DataMember(Name = "citizenId")] public string CitizenId { get; set; }
         }
 
+        // STEP 71: Read-only notifications + mark-as-read. No client-side SQL.
+        public async Task<LibraryNotificationListResult> GetNotificationsAsync(string token)
+        {
+            try
+            {
+                using (var request = NewRequest(HttpMethod.Get, "http://127.0.0.1:5082/api/notifications", token))
+                using (var response = await Http.SendAsync(request))
+                {
+                    string json = await response.Content.ReadAsStringAsync();
+                    if (!response.IsSuccessStatusCode)
+                        return new LibraryNotificationListResult { Message = Error(json, response.StatusCode) };
+                    var payload = Parse<LibraryNotificationResponse>(json);
+                    return new LibraryNotificationListResult
+                    {
+                        IsSuccess = true,
+                        UnreadCount = payload == null ? 0 : payload.UnreadCount,
+                        Notifications = payload == null || payload.Notifications == null
+                            ? new List<LibraryNotification>() : payload.Notifications
+                    };
+                }
+            }
+            catch (Exception ex) when (ex is HttpRequestException || ex is TaskCanceledException ||
+                                       ex is SerializationException || ex is InvalidOperationException)
+            { return new LibraryNotificationListResult { Message = "Không tải được thông báo. Kiểm tra API." }; }
+        }
+
+        public Task<LoanActionResult> MarkNotificationReadAsync(string token, long notificationId)
+        {
+            return SendActionAsync("http://127.0.0.1:5082/api/notifications/" + notificationId + "/read", token, "{}");
+        }
+        public Task<LoanActionResult> MarkAllNotificationsReadAsync(string token)
+        {
+            return SendActionAsync("http://127.0.0.1:5082/api/notifications/read-all", token, "{}");
+        }
+
+        [DataContract]
+        private sealed class LibraryNotificationResponse
+        {
+            [DataMember(Name = "unreadCount")] public long UnreadCount { get; set; }
+            [DataMember(Name = "notifications")] public List<LibraryNotification> Notifications { get; set; }
+        }
+
         private static HttpRequestMessage NewRequest(HttpMethod method, string url, string token)
         {
             var request = new HttpRequestMessage(method, url);
@@ -609,4 +651,22 @@ namespace QuanLyThuVien.Services
             " · Đã trả trễ: " + LateReturns + " · Đã trả: " + CompletedReturns;
     }
 
+    [DataContract]
+    public sealed class LibraryNotification
+    {
+        [DataMember(Name = "notificationId")] public long NotificationId { get; set; }
+        [DataMember(Name = "notificationType")] public string NotificationType { get; set; }
+        [DataMember(Name = "title")] public string Title { get; set; }
+        [DataMember(Name = "body")] public string Body { get; set; }
+        [DataMember(Name = "createdAt")] public string CreatedAt { get; set; }
+        [DataMember(Name = "isUnread")] public bool IsUnread { get; set; }
+        public string ReadStatus => IsUnread ? "CHƯA ĐỌC" : "Đã đọc";
+    }
+    public sealed class LibraryNotificationListResult
+    {
+        public bool IsSuccess { get; set; }
+        public string Message { get; set; }
+        public long UnreadCount { get; set; }
+        public List<LibraryNotification> Notifications { get; set; } = new List<LibraryNotification>();
+    }
 }

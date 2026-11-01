@@ -27,6 +27,13 @@ namespace QuanLyThuVien.ViewModels
         private bool _showSearchSuggestions, _suppressSearchSuggestions;
 
         private string _query = "", _message = "", _copyCode = "", _shelf = "";
+        private BookCopyDto _selectedCopy;
+        private string _locationShelf = "K1", _locationTier = "1", _locationSlot = "A1";
+        public ObservableCollection<string> ShelfOptions { get; } = new ObservableCollection<string> { "K1", "K2", "K3", "K4", "K5", "K6" };
+        public ObservableCollection<string> TierOptions { get; } = new ObservableCollection<string> { "1", "2", "3", "4" };
+        public ObservableCollection<string> SlotOptions { get; } = new ObservableCollection<string>(
+            new[] { "A", "B", "C", "D" }.SelectMany(letter =>
+                Enumerable.Range(1, 4).Select(number => letter + number.ToString())));
         private string _authorName = "", _authorDetail = "", _publisherName = "", _publisherDetail = "", _categoryName = "";
         private CatalogBook _selectedBook;
         private BookDetailResult _detail;
@@ -37,6 +44,44 @@ namespace QuanLyThuVien.ViewModels
         private bool _updatingFacets;
         private string _detailMessage = "";
         private bool _busy, _booksLoaded, _referencesLoaded, _loadingReferences, _detailExpanded;
+        // STEP 70: one review per Reader/book. No fake ratings are seeded.
+        private BookRatingsResult _ratings;
+        private string _ratingMessage = "", _ratingComment = "";
+        private int? _selectedRatingScore;
+        private bool _savingRating;
+        public ObservableCollection<int> RatingScoreOptions { get; } =
+            new ObservableCollection<int> { 1, 2, 3, 4, 5 };
+        public ObservableCollection<BookRatingItem> RatingComments { get; } =
+            new ObservableCollection<BookRatingItem>();
+        public BookRatingsResult Ratings
+        {
+            get => _ratings;
+            private set
+            {
+                if (!Set(ref _ratings, value)) return;
+                Notify(nameof(RatingSummary));
+                Notify(nameof(CanRateBook));
+                (SaveRatingCommand as AsyncCommand)?.Refresh();
+            }
+        }
+        public string RatingSummary => Ratings == null
+            ? (string.IsNullOrWhiteSpace(RatingMessage) ? "Đang tải đánh giá..." : "Chưa tải được đánh giá")
+            : Ratings.RatingCount == 0 ? "Chưa có đánh giá."
+            : Ratings.AverageScore.ToString("0.0", CultureInfo.CurrentCulture) + "/5 sao · " +
+              Ratings.RatingCount + " lượt đánh giá";
+        public bool CanRateBook => IsReader && Ratings != null && Ratings.CanReview;
+        public int? SelectedRatingScore
+        {
+            get => _selectedRatingScore;
+            set { if (Set(ref _selectedRatingScore, value)) (SaveRatingCommand as AsyncCommand)?.Refresh(); }
+        }
+        public string RatingComment { get => _ratingComment; set => Set(ref _ratingComment, value ?? ""); }
+        public string RatingMessage
+        {
+            get => _ratingMessage;
+            private set { if (Set(ref _ratingMessage, value)) Notify(nameof(RatingSummary)); }
+        }
+        public ICommand SaveRatingCommand { get; }
         private enum Facet { None, Category, Author, Publisher, Year }
 
         public BookManagementViewModel(string token, string role)
@@ -73,9 +118,19 @@ namespace QuanLyThuVien.ViewModels
                 ShowSearchSuggestions = false;
                 BorrowBookRequested?.Invoke(book);
             }, _ => IsReader && SelectedBook != null && Detail != null && !Busy);
+            RouteToBookCommand = new ActionCommand(_ =>
+            {
+                if (SelectedBook == null) return;
+                var book = SelectedBook;
+                DetailExpanded = false;
+                RouteToBookRequested?.Invoke(book);
+            }, _ => SelectedBook != null && Detail != null);
+            SaveRatingCommand = new AsyncCommand(_ => SaveRatingAsync(),
+                _ => CanRateBook && SelectedBook != null && SelectedRatingScore.HasValue && !_savingRating);
             DetailCommand = new AsyncCommand(_ => LoadDetailAsync(), _ => SelectedBook != null);
             CloseDetailCommand = new ActionCommand(_ => DetailExpanded = false);
             AddCopyCommand = new AsyncCommand(_ => AddCopyAsync(), _ => CanManage && SelectedBook != null);
+            SaveCopyLocationCommand = new AsyncCommand(_ => SaveCopyLocationAsync(), _ => CanManage && SelectedBook != null && SelectedCopy != null && !Busy);
             LoadReferencesCommand = new AsyncCommand(_ => LoadReferencesAsync(), _ => !_loadingReferences);
             AddAuthorCommand = new AsyncCommand(_ => AddReferenceAsync("authors", AuthorName, AuthorDetail), _ => CanManage);
             AddPublisherCommand = new AsyncCommand(_ => AddReferenceAsync("publishers", PublisherName, PublisherDetail), _ => CanManage);
@@ -86,6 +141,9 @@ namespace QuanLyThuVien.ViewModels
         public bool IsReader => !CanManage;
         // MainViewModel subscribes once to navigate to its existing BorrowRequestViewModel.
         public event Action<CatalogBook> BorrowBookRequested;
+        public event Action<CatalogBook> RouteToBookRequested;
+        public ICommand RouteToBookCommand { get; }
+
         public ObservableCollection<CatalogBook> SearchSuggestions { get; } = new ObservableCollection<CatalogBook>();
         public bool ShowSearchSuggestions
         {
@@ -142,6 +200,40 @@ namespace QuanLyThuVien.ViewModels
         }
         public string CopyCode { get => _copyCode; set => Set(ref _copyCode, value); }
         public string Shelf { get => _shelf; set => Set(ref _shelf, value); }
+        public BookCopyDto SelectedCopy
+        {
+            get => _selectedCopy;
+            set
+            {
+                if (!Set(ref _selectedCopy, value)) return;
+                var match = System.Text.RegularExpressions.Regex.Match(
+                    value?.ShelfLocation ?? "",
+                    @"(?i)^(?:DEMO-KE-0?|K)([1-6])-T([1-4])-([A-D][1-4])$");
+                if (match.Success)
+                {
+                    LocationShelf = "K" + match.Groups[1].Value;
+                    LocationTier = match.Groups[2].Value;
+                    LocationSlot = match.Groups[3].Value.ToUpperInvariant();
+                }
+                else
+                {
+                    LocationTier = "1";
+                    LocationSlot = "A1";
+                    var m = System.Text.RegularExpressions.Regex.Match(
+                        value?.ShelfLocation ?? "", @"(?i)^(?:DEMO-KE-0?|K)([1-6])(?=$|[^0-9])");
+                    if (m.Success) LocationShelf = "K" + m.Groups[1].Value;
+                }
+                LocationMessage = value == null
+                    ? "Chọn một cuốn trong danh sách để gán vị trí."
+                    : "Đang chọn mã cuốn " + value.CopyCode + ".";
+                (SaveCopyLocationCommand as AsyncCommand)?.Refresh();
+            }
+        }
+        public string LocationShelf { get => _locationShelf; set => Set(ref _locationShelf, value); }
+        public string LocationTier { get => _locationTier; set => Set(ref _locationTier, value); }
+        public string LocationSlot { get => _locationSlot; set => Set(ref _locationSlot, value); }
+        public string LocationMessage { get => _locationMessage; private set => Set(ref _locationMessage, value); }
+        private string _locationMessage = "Chọn một cuốn trong danh sách để gán vị trí.";
         public string AuthorName { get => _authorName; set => Set(ref _authorName, value); }
         public string AuthorDetail { get => _authorDetail; set => Set(ref _authorDetail, value); }
         public string PublisherName { get => _publisherName; set => Set(ref _publisherName, value); }
@@ -178,10 +270,18 @@ namespace QuanLyThuVien.ViewModels
                 Detail = null;
                 DetailExpanded = false;
                 DetailMessage = "";
+                Ratings = null;
+                RatingComments.Clear();
+                SelectedRatingScore = null;
+                RatingComment = "";
+                RatingMessage = "";
                 Copies.Clear();
+                SelectedCopy = null;
+                LocationMessage = "Chọn một cuốn trong danh sách để gán vị trí.";
                 (DetailCommand as AsyncCommand)?.Refresh();
                 (AddCopyCommand as AsyncCommand)?.Refresh();
                 (BorrowBookCommand as ActionCommand)?.Refresh();
+                (RouteToBookCommand as ActionCommand)?.Refresh();
             }
         }
         public BookDetailResult Detail
@@ -197,6 +297,7 @@ namespace QuanLyThuVien.ViewModels
                 Notify(nameof(DetailPublicationYear));
                 Notify(nameof(DetailIsbn));
                 (BorrowBookCommand as ActionCommand)?.Refresh();
+                (RouteToBookCommand as ActionCommand)?.Refresh();
             }
         }
         public string DetailDescription => Display(Detail?.Description, "Chưa có mô tả.");
@@ -217,6 +318,7 @@ namespace QuanLyThuVien.ViewModels
         public ICommand DetailCommand { get; }
         public ICommand CloseDetailCommand { get; }
         public ICommand AddCopyCommand { get; }
+        public ICommand SaveCopyLocationCommand { get; }
         public ICommand LoadReferencesCommand { get; }
         public ICommand AddAuthorCommand { get; }
         public ICommand AddPublisherCommand { get; }
@@ -492,16 +594,67 @@ namespace QuanLyThuVien.ViewModels
                 Detail = data;
                 DetailMessage = "";
                 if (CanManage) await ReloadCopiesAsync(id);
+                await LoadRatingsAsync(id);
             }
             catch (Exception) { DetailMessage = "Không tải được chi tiết sách."; }
             finally { Busy = false; }
+        }
+
+        private async Task LoadRatingsAsync(long id)
+        {
+            var response = await _detailApi.GetRatingsAsync(_token, id);
+            if (SelectedBook == null || SelectedBook.BookId != id) return;
+            if (!string.IsNullOrWhiteSpace(response.Error))
+            {
+                Ratings = null;
+                RatingMessage = response.Error;
+                return;
+            }
+            Ratings = response;
+            Replace(RatingComments, response.Reviews);
+            SelectedRatingScore = response.MyScore > 0 ? (int?)response.MyScore : null;
+            RatingComment = response.MyComment ?? "";
+            RatingMessage = IsReader && !response.CanReview
+                ? "Bạn cần từng mượn đầu sách này mới được đánh giá."
+                : "";
+        }
+
+        private async Task SaveRatingAsync()
+        {
+            if (!CanRateBook || !SelectedRatingScore.HasValue || SelectedBook == null || _savingRating) return;
+            long id = SelectedBook.BookId;
+            if ((RatingComment ?? "").Length > 1000)
+            { RatingMessage = "Nhận xét không quá 1000 ký tự."; return; }
+            _savingRating = true;
+            (SaveRatingCommand as AsyncCommand)?.Refresh();
+            try
+            {
+                string result = await _detailApi.SaveRatingAsync(
+                    _token, id, SelectedRatingScore.Value, (RatingComment ?? "").Trim());
+                if (SelectedBook == null || SelectedBook.BookId != id) return;
+                if (result != "Đã lưu đánh giá sách.") { RatingMessage = result; return; }
+                await LoadRatingsAsync(id);
+                if (SelectedBook != null && SelectedBook.BookId == id)
+                    RatingMessage = "Đã lưu đánh giá của bạn.";
+            }
+            catch (Exception) { if (SelectedBook?.BookId == id) RatingMessage = "Không lưu được đánh giá."; }
+            finally
+            {
+                _savingRating = false;
+                (SaveRatingCommand as AsyncCommand)?.Refresh();
+            }
         }
 
         private async Task ReloadCopiesAsync(long id)
         {
             var result = await _detailApi.GetCopiesAsync(_token, id);
             if (!string.IsNullOrWhiteSpace(result.Error)) { Message = result.Error; return; }
-            if (SelectedBook != null && SelectedBook.BookId == id) Replace(Copies, result.Copies);
+            if (SelectedBook != null && SelectedBook.BookId == id)
+            {
+                long selectedId = SelectedCopy?.CopyId ?? 0;
+                Replace(Copies, result.Copies);
+                SelectedCopy = Copies.FirstOrDefault(c => c.CopyId == selectedId);
+            }
         }
 
         public async Task AddCopyAsync()
@@ -524,6 +677,38 @@ namespace QuanLyThuVien.ViewModels
             }
             catch (Exception) { Message = "Không thêm được bản sao sách."; }
             finally { Busy = false; }
+        }
+
+        // STEP 69: Save location without recreating a physical copy or changing its identity.
+        public async Task SaveCopyLocationAsync()
+        {
+            if (!CanManage || SelectedBook == null || SelectedCopy == null || Busy) return;
+            long bookId = SelectedBook.BookId;
+            long copyId = SelectedCopy.CopyId;
+            if (!ShelfOptions.Contains(LocationShelf) || !TierOptions.Contains(LocationTier) || !SlotOptions.Contains(LocationSlot))
+            {
+                LocationMessage = "Chọn kệ K1-K6, tầng 1-4, ô A1-D4.";
+                return;
+            }
+            var shelfLocation = "DEMO-KE-0" + LocationShelf.Substring(1) + "-T" + LocationTier + "-" + LocationSlot;
+            Busy = true;
+            (SaveCopyLocationCommand as AsyncCommand)?.Refresh();
+            try
+            {
+                var result = await _detailApi.ChangeCopyLocationAsync(_token, bookId, copyId, shelfLocation);
+                LocationMessage = result;
+                if (result == "Đã cập nhật vị trí cuốn sách." && SelectedBook?.BookId == bookId)
+                {
+                    await ReloadCopiesAsync(bookId);
+                    LocationMessage = "Đã gán " + shelfLocation + ". Mở sơ đồ 2D để xem chỉ dẫn.";
+                }
+            }
+            catch (Exception) { LocationMessage = "Không lưu được vị trí cuốn sách."; }
+            finally
+            {
+                Busy = false;
+                (SaveCopyLocationCommand as AsyncCommand)?.Refresh();
+            }
         }
 
         private async Task AddReferenceAsync(string kind, string name, string detail)

@@ -467,6 +467,66 @@ app.MapGet("/api/books", async (
 });
 
 
+// STEP 68: Reader/Staff/Admin can locate shelves; read-only. Never exposes reader identities.
+// The floor-plan coordinates are simulated in WPF; physical shelf locations come from book_copies.
+app.MapGet("/api/library-map/books", async (
+    HttpRequest request, SessionService sessions,
+    IConfiguration config, CancellationToken ct) =>
+{
+    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    var session = sessions.Validate(ReadBearerToken(request));
+    if (session is null) return Results.Unauthorized();
+    if (session.Role is not ("Reader" or "Staff" or "Admin")) return Results.StatusCode(403);
+    try
+    {
+        string cs = config.GetConnectionString("AivenPostgres")
+            ?? throw new InvalidOperationException("Database not configured.");
+        await using var db = new NpgsqlConnection(cs);
+        await db.OpenAsync(ct);
+        const string sql = @"
+            WITH positioned AS (
+                SELECT b.book_id, b.title, c.copy_code,
+                       TRIM(c.shelf_location) AS shelf_location,
+                       CASE WHEN c.condition_status = 'active' AND NOT EXISTS (
+                            SELECT 1 FROM public.borrow_details bd
+                            WHERE bd.book_copy_id = c.copy_id AND bd.closed_at IS NULL
+                       ) THEN 1 ELSE 0 END AS available
+                FROM public.books b
+                JOIN public.book_copies c ON c.book_id = b.book_id
+                WHERE b.is_visible = TRUE
+                  AND NULLIF(TRIM(COALESCE(c.shelf_location,'')), '') IS NOT NULL
+            )
+            SELECT book_id, title, shelf_location,
+                   COUNT(*) AS total_copies, COALESCE(SUM(available), 0) AS available_copies,
+                   COALESCE(MIN(copy_code) FILTER (WHERE available = 1), '') AS sample_copy_code
+            FROM positioned
+            GROUP BY book_id, title, shelf_location
+            ORDER BY title, shelf_location
+            LIMIT 1000";
+        await using var cmd = new NpgsqlCommand(sql, db);
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        var items = new List<object>();
+        while (await reader.ReadAsync(ct))
+        {
+            items.Add(new
+            {
+                bookId = reader.GetInt64(0),
+                title = reader.GetString(1),
+                shelfLocation = reader.GetString(2),
+                totalCopies = reader.GetInt64(3),
+                availableCopies = reader.GetInt64(4),
+                sampleCopyCode = reader.GetString(5)
+            });
+        }
+        return Results.Ok(new { items });
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogError("Library map query failed: {ErrorType}", ex.GetType().Name);
+        return Results.Json(new { message = "Khong tai duoc vi tri ke sach." }, statusCode: 503);
+    }
+});
+
 // Step 44: book detail is readable by logged-in roles. Copy changes require Staff/Admin.
 // STEP 51: Full book details for a centred WPF detail dialog. Counts are derived
 // from existing physical copies and active borrow details, not book metadata.
@@ -539,6 +599,158 @@ app.MapGet("/api/books/{bookId:long}/details", async (
     {
         app.Logger.LogError("Book details failed: {Type}", error.GetType().Name);
         return Results.Json(new { message = "Khong tai duoc chi tiet sach." }, statusCode: 503);
+    }
+});
+
+// STEP 70 - Reader reviews: read by logged-in roles, write only by Reader with actual loan history.
+// Never trust a user_id from the client. Guest identities remain non-login accounts.
+app.MapGet("/api/books/{bookId:long}/ratings", async (
+    long bookId, HttpRequest request, SessionService sessions,
+    IConfiguration config, CancellationToken ct) =>
+{
+    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    var actor = sessions.Validate(ReadBearerToken(request));
+    if (actor is null) return Results.Unauthorized();
+    if (actor.Role is not ("Reader" or "Staff" or "Admin")) return Results.StatusCode(403);
+    try
+    {
+        await using var db = new NpgsqlConnection(config.GetConnectionString("AivenPostgres")
+            ?? throw new InvalidOperationException("Database not configured."));
+        await db.OpenAsync(ct);
+        await using (var book = new NpgsqlCommand(
+            "SELECT EXISTS(SELECT 1 FROM public.books WHERE book_id=@id AND is_visible=TRUE)", db))
+        {
+            book.Parameters.AddWithValue("id", bookId);
+            if (!Convert.ToBoolean(await book.ExecuteScalarAsync(ct))) return Results.NotFound();
+        }
+
+        long count; double average;
+        await using (var summary = new NpgsqlCommand(@"
+            SELECT COUNT(*), COALESCE(ROUND(AVG(score)::numeric,1),0)::float8
+            FROM public.ratings WHERE book_id=@book", db))
+        {
+            summary.Parameters.AddWithValue("book", bookId);
+            await using var rd = await summary.ExecuteReaderAsync(ct);
+            await rd.ReadAsync(ct);
+            count = rd.GetInt64(0);
+            average = rd.GetDouble(1);
+        }
+
+        bool canReview = false; int myScore = 0; string myComment = "";
+        if (actor.Role == "Reader")
+        {
+            await using (var eligible = new NpgsqlCommand(@"
+                SELECT EXISTS (
+                    SELECT 1 FROM public.borrows b
+                    JOIN public.borrow_details bd ON bd.borrow_id=b.borrow_id
+                    JOIN public.book_copies c ON c.copy_id=bd.book_copy_id
+                    WHERE b.reader_user_id=@reader AND c.book_id=@book
+                )", db))
+            {
+                eligible.Parameters.AddWithValue("reader", actor.UserId);
+                eligible.Parameters.AddWithValue("book", bookId);
+                canReview = Convert.ToBoolean(await eligible.ExecuteScalarAsync(ct));
+            }
+            await using (var mine = new NpgsqlCommand(@"
+                SELECT score, COALESCE(comment,'') FROM public.ratings
+                WHERE user_id=@reader AND book_id=@book", db))
+            {
+                mine.Parameters.AddWithValue("reader", actor.UserId);
+                mine.Parameters.AddWithValue("book", bookId);
+                await using var rd = await mine.ExecuteReaderAsync(ct);
+                if (await rd.ReadAsync(ct)) { myScore = rd.GetInt16(0); myComment = rd.GetString(1); }
+            }
+        }
+
+        var reviews = new List<object>();
+        await using (var latest = new NpgsqlCommand(@"
+            SELECT score, comment, updated_at FROM public.ratings
+            WHERE book_id=@book AND NULLIF(BTRIM(comment),'') IS NOT NULL
+            ORDER BY updated_at DESC, rating_id DESC LIMIT 10", db))
+        {
+            latest.Parameters.AddWithValue("book", bookId);
+            await using var rd = await latest.ExecuteReaderAsync(ct);
+            while (await rd.ReadAsync(ct))
+                reviews.Add(new
+                {
+                    score = rd.GetInt16(0),
+                    comment = rd.GetString(1),
+                    updatedAt = rd.GetDateTime(2).ToUniversalTime().AddHours(7).ToString("dd/MM/yyyy", CultureInfo.InvariantCulture)
+                });
+        }
+        // Other reviewers are anonymous. No username, phone, ID, loan or audit data is exposed.
+        return Results.Ok(new
+        {
+            ratingCount = count,
+            averageScore = average,
+            canReview,
+            myScore,
+            myComment,
+            reviews
+        });
+    }
+    catch (OperationCanceledException) when (ct.IsCancellationRequested)
+    { return Results.StatusCode(499); }
+    catch (PostgresException ex) when (ex.SqlState is PostgresErrorCodes.UndefinedTable or PostgresErrorCodes.UndefinedColumn)
+    { return Results.Conflict(new { message = "Bảng/cột ratings chưa đúng schema DB-11." }); }
+    catch (Exception ex)
+    {
+        app.Logger.LogError("Book rating list failed: {ErrorType}", ex.GetType().Name);
+        return Results.Json(new { message = "Không tải được đánh giá sách." }, statusCode: 503);
+    }
+});
+
+// PUT is idempotent with respect to the user's unique (user_id,book_id) review.
+app.MapPut("/api/books/{bookId:long}/rating", async (
+    long bookId, BookRatingUpdate input, HttpRequest request,
+    SessionService sessions, IConfiguration config, CancellationToken ct) =>
+{
+    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    var actor = sessions.Validate(ReadBearerToken(request));
+    if (actor is null) return Results.Unauthorized();
+    if (actor.Role != "Reader") return Results.StatusCode(403);
+    if (input.Score is < 1 or > 5)
+        return Results.BadRequest(new { message = "Điểm phải từ 1 đến 5." });
+    string? comment = string.IsNullOrWhiteSpace(input.Comment) ? null : input.Comment.Trim();
+    if (comment is { Length: > 1000 })
+        return Results.BadRequest(new { message = "Nhận xét không quá 1000 ký tự." });
+    try
+    {
+        await using var db = new NpgsqlConnection(config.GetConnectionString("AivenPostgres")
+            ?? throw new InvalidOperationException("Database not configured."));
+        await db.OpenAsync(ct);
+        // The real loan history check occurs inside the write statement, not just in WPF.
+        const string sql = @"
+            INSERT INTO public.ratings (user_id,book_id,score,comment)
+            SELECT @reader, b.book_id, @score, @comment
+            FROM public.books b
+            WHERE b.book_id=@book AND b.is_visible=TRUE
+              AND EXISTS (
+                  SELECT 1 FROM public.borrows br
+                  JOIN public.borrow_details bd ON bd.borrow_id=br.borrow_id
+                  JOIN public.book_copies c ON c.copy_id=bd.book_copy_id
+                  WHERE br.reader_user_id=@reader AND c.book_id=b.book_id
+              )
+            ON CONFLICT (user_id,book_id) DO UPDATE SET
+                score=EXCLUDED.score, comment=EXCLUDED.comment, updated_at=NOW()
+            RETURNING rating_id;";
+        await using var cmd = new NpgsqlCommand(sql, db);
+        cmd.Parameters.AddWithValue("reader", actor.UserId);
+        cmd.Parameters.AddWithValue("book", bookId);
+        cmd.Parameters.AddWithValue("score", input.Score);
+        cmd.Parameters.Add("comment", NpgsqlDbType.Text).Value = (object?)comment ?? DBNull.Value;
+        var saved = await cmd.ExecuteScalarAsync(ct);
+        if (saved is null) return Results.StatusCode(403); // No real loan history or hidden book.
+        return Results.Ok(new { message = "Đã lưu đánh giá sách." });
+    }
+    catch (OperationCanceledException) when (ct.IsCancellationRequested)
+    { return Results.StatusCode(499); }
+    catch (PostgresException ex) when (ex.SqlState is PostgresErrorCodes.UndefinedTable or PostgresErrorCodes.UndefinedColumn)
+    { return Results.Conflict(new { message = "Bảng/cột ratings chưa đúng schema DB-11." }); }
+    catch (Exception ex)
+    {
+        app.Logger.LogError("Book rating save failed: {ErrorType}", ex.GetType().Name);
+        return Results.Json(new { message = "Không lưu được đánh giá sách." }, statusCode: 503);
     }
 });
 
@@ -632,6 +844,82 @@ app.MapPost("/api/books/{bookId:long}/copies", async (
     {
         app.Logger.LogError("Copy create failed: {Type}", e.GetType().Name);
         return Results.Json(new { message = "Khong the tao ban sao." }, statusCode: 503);
+    }
+});
+
+
+// STEP 69: Staff/Admin may assign shelf + level + compartment to an existing copy.
+// Uses the existing book_copies.shelf_location field, not a new table.
+app.MapPut("/api/books/{bookId:long}/copies/{copyId:long}/location", async (
+    long bookId, long copyId, ChangeCopyLocationRequest body, HttpRequest request,
+    SessionService sessions, IConfiguration config, CancellationToken ct) =>
+{
+    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    var session = sessions.Validate(ReadBearerToken(request));
+    if (session is null) return Results.Unauthorized();
+    if (session.Role is not ("Staff" or "Admin")) return Results.StatusCode(403);
+
+    // Strict canonical encoding prevents ambiguous/unsupported positions on the demo map.
+    string shelf = body.ShelfLocation?.Trim().ToUpperInvariant() ?? "";
+    if (!Regex.IsMatch(shelf, @"^DEMO-KE-0[1-6]-T[1-4]-[A-D][1-4]$",
+                       RegexOptions.CultureInvariant))
+        return Results.BadRequest(new { message = "Chon ke K1-K6, tang 1-4 va o A1-D4." });
+
+    try
+    {
+        await using var db = new NpgsqlConnection(config.GetConnectionString("AivenPostgres"));
+        await db.OpenAsync(ct);
+        await using var tx = await db.BeginTransactionAsync(ct);
+        string oldLocation;
+        string copyCode;
+        // Reject attempts to relocate physical copies that are currently on loan.
+        const string fetch = @"
+            SELECT bc.copy_code, COALESCE(bc.shelf_location,'')
+            FROM public.book_copies bc
+            WHERE bc.copy_id=@copyId AND bc.book_id=@bookId
+              AND NOT EXISTS (
+                SELECT 1 FROM public.borrow_details bd
+                WHERE bd.book_copy_id=bc.copy_id AND bd.closed_at IS NULL)
+            FOR UPDATE OF bc";
+        await using (var cmd = new NpgsqlCommand(fetch, db, tx))
+        {
+            cmd.Parameters.AddWithValue("copyId", copyId);
+            cmd.Parameters.AddWithValue("bookId", bookId);
+            await using var r = await cmd.ExecuteReaderAsync(ct);
+            if (!await r.ReadAsync(ct)) return Results.Conflict(new { message = "Khong tim thay cuon hoac cuon dang duoc muon." });
+            copyCode = r.GetString(0);
+            oldLocation = r.GetString(1);
+        }
+        await using (var cmd = new NpgsqlCommand(@"
+            UPDATE public.book_copies SET shelf_location=@location
+            WHERE copy_id=@copyId AND book_id=@bookId", db, tx))
+        {
+            cmd.Parameters.AddWithValue("copyId", copyId);
+            cmd.Parameters.AddWithValue("bookId", bookId);
+            cmd.Parameters.AddWithValue("location", shelf);
+            if (await cmd.ExecuteNonQueryAsync(ct) != 1)
+                return Results.Conflict(new { message = "Cuon sach khong con ton tai." });
+        }
+        // Audit contains locations/copy ID only; never reader PII or tokens.
+        await using (var cmd = new NpgsqlCommand(@"
+            INSERT INTO public.audit_logs(actor_user_id,action,entity_type,entity_id,details)
+            VALUES (@actor,'copy_location_updated','book_copy',@entity,
+                    jsonb_build_object('oldLocation',@old,'newLocation',@new,'copyCode',@code))", db, tx))
+        {
+            cmd.Parameters.AddWithValue("actor", session.UserId);
+            cmd.Parameters.AddWithValue("entity", copyId.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            cmd.Parameters.AddWithValue("old", oldLocation);
+            cmd.Parameters.AddWithValue("new", shelf);
+            cmd.Parameters.AddWithValue("code", copyCode);
+            await cmd.ExecuteNonQueryAsync(ct);
+        }
+        await tx.CommitAsync(ct);
+        return Results.Ok(new { copyId, copyCode, shelfLocation = shelf });
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogError("Copy shelf assignment failed: {ErrorType}", ex.GetType().Name);
+        return Results.Json(new { message = "Khong cap nhat duoc vi tri cuon." }, statusCode: 503);
     }
 });
 
@@ -2551,6 +2839,15 @@ app.MapPost("/api/borrow-requests/{requestId:long}/review", async (
                 items.Parameters.AddWithValue("id", requestId);
                 await items.ExecuteNonQueryAsync(ct);
             }
+            await using (var notice = new NpgsqlCommand(@"
+                INSERT INTO public.notifications(user_id,notification_type,title,body)
+                VALUES(@reader,'borrow_request_review',@title,@body);", db, tx))
+            {
+                notice.Parameters.AddWithValue("reader", owner);
+                notice.Parameters.AddWithValue("title", "Đơn mượn bị từ chối");
+                notice.Parameters.AddWithValue("body", $"Đơn mượn #{requestId} đã bị từ chối. Xem chi tiết trong Đơn đã đặt / Lịch sử.");
+                await notice.ExecuteNonQueryAsync(ct);
+            }
             await tx.CommitAsync(ct);
             return Results.Ok(new { message = "Da tu choi don va luu ly do." });
         }
@@ -2666,6 +2963,15 @@ app.MapPost("/api/borrow-requests/{requestId:long}/review", async (
             if (await done.ExecuteNonQueryAsync(ct) != 1)
                 throw new InvalidOperationException("Request was concurrently changed.");
         }
+        await using (var notice = new NpgsqlCommand(@"
+            INSERT INTO public.notifications(user_id,notification_type,title,body)
+            VALUES(@reader,'borrow_request_review',@title,@body);", db, tx))
+        {
+            notice.Parameters.AddWithValue("reader", owner);
+            notice.Parameters.AddWithValue("title", "Đơn mượn đã được duyệt");
+            notice.Parameters.AddWithValue("body", $"Đơn #{requestId} đã được duyệt, bàn giao {assigned.Count} cuốn. Phiếu mượn #{borrowId}.");
+            await notice.ExecuteNonQueryAsync(ct);
+        }
         await tx.CommitAsync(ct);
         return Results.Ok(new { message = $"Da duyet don va giao {assigned.Count} cuon. Phieu muon #{borrowId}.", borrowId });
     }
@@ -2677,6 +2983,121 @@ app.MapPost("/api/borrow-requests/{requestId:long}/review", async (
     {
         app.Logger.LogError(ex, "Borrow request review failed");
         return Results.Json(new { message = "Khong xu ly duoc don. Kiem tra API console." }, statusCode: 503);
+    }
+});
+
+// STEP 71 — Thông báo trong ứng dụng. Reader chỉ đọc thông báo của chính mình.
+// Không gửi SMS/email và không lộ nội dung của độc giả khác.
+app.MapGet("/api/notifications", async (HttpRequest request, SessionService sessions,
+    IConfiguration configuration, CancellationToken ct) =>
+{
+    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    var actor = sessions.Validate(ReadBearerToken(request));
+    if (actor is null) return Results.Unauthorized();
+    if (actor.Role != "Reader") return Results.StatusCode(403);
+    try
+    {
+        var cs = configuration.GetConnectionString("AivenPostgres")
+            ?? throw new InvalidOperationException("Database is not configured");
+        await using var db = new NpgsqlConnection(cs);
+        await db.OpenAsync(ct);
+        long unreadCount;
+        await using (var count = new NpgsqlCommand(@"
+            SELECT COUNT(*) FROM public.notifications
+            WHERE user_id=@reader AND read_at IS NULL;", db))
+        {
+            count.Parameters.AddWithValue("reader", actor.UserId);
+            unreadCount = Convert.ToInt64(await count.ExecuteScalarAsync(ct));
+        }
+        var items = new List<object>();
+        await using (var cmd = new NpgsqlCommand(@"
+            SELECT notification_id, notification_type, title, body,
+                   TO_CHAR(created_at AT TIME ZONE 'Asia/Ho_Chi_Minh','DD/MM/YYYY HH24:MI'),
+                   read_at IS NULL
+            FROM public.notifications
+            WHERE user_id=@reader
+            ORDER BY notification_id DESC LIMIT 100;", db))
+        {
+            cmd.Parameters.AddWithValue("reader", actor.UserId);
+            await using var rd = await cmd.ExecuteReaderAsync(ct);
+            while (await rd.ReadAsync(ct)) items.Add(new
+            {
+                notificationId = rd.GetInt64(0),
+                notificationType = rd.GetString(1),
+                title = rd.GetString(2),
+                body = rd.GetString(3),
+                createdAt = rd.GetString(4) + " (VN)",
+                isUnread = rd.GetBoolean(5)
+            });
+        }
+        return Results.Ok(new { unreadCount, notifications = items });
+    }
+    catch (PostgresException ex) when (ex.SqlState is PostgresErrorCodes.UndefinedTable or PostgresErrorCodes.UndefinedColumn)
+    { return Results.Json(new { message = "Thiếu bảng/cột notifications trong schema DB-11." }, statusCode: 503); }
+    catch (OperationCanceledException) when (ct.IsCancellationRequested) { return Results.StatusCode(499); }
+    catch (Exception ex)
+    {
+        app.Logger.LogError("Load notifications failed: {Type}", ex.GetType().Name);
+        return Results.Json(new { message = "Không tải được thông báo." }, statusCode: 503);
+    }
+});
+
+app.MapPost("/api/notifications/{notificationId:long}/read", async (long notificationId,
+    HttpRequest request, SessionService sessions, IConfiguration configuration, CancellationToken ct) =>
+{
+    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    var actor = sessions.Validate(ReadBearerToken(request));
+    if (actor is null) return Results.Unauthorized();
+    if (actor.Role != "Reader") return Results.StatusCode(403);
+    if (notificationId <= 0) return Results.BadRequest(new { message = "Mã thông báo không hợp lệ." });
+    try
+    {
+        var cs = configuration.GetConnectionString("AivenPostgres")
+            ?? throw new InvalidOperationException("Database is not configured");
+        await using var db = new NpgsqlConnection(cs);
+        await db.OpenAsync(ct);
+        await using var cmd = new NpgsqlCommand(@"
+            UPDATE public.notifications SET read_at=COALESCE(read_at,NOW())
+            WHERE notification_id=@id AND user_id=@reader RETURNING notification_id;", db);
+        cmd.Parameters.AddWithValue("id", notificationId);
+        cmd.Parameters.AddWithValue("reader", actor.UserId);
+        var found = await cmd.ExecuteScalarAsync(ct);
+        if (found is null) return Results.NotFound();
+        return Results.Ok(new { message = "Đã đánh dấu đã đọc." });
+    }
+    catch (OperationCanceledException) when (ct.IsCancellationRequested) { return Results.StatusCode(499); }
+    catch (Exception ex)
+    {
+        app.Logger.LogError("Mark notification read failed: {Type}", ex.GetType().Name);
+        return Results.Json(new { message = "Không cập nhật được thông báo." }, statusCode: 503);
+    }
+});
+
+app.MapPost("/api/notifications/read-all", async (HttpRequest request, SessionService sessions,
+    IConfiguration configuration, CancellationToken ct) =>
+{
+    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    var actor = sessions.Validate(ReadBearerToken(request));
+    if (actor is null) return Results.Unauthorized();
+    if (actor.Role != "Reader") return Results.StatusCode(403);
+    try
+    {
+        var cs = configuration.GetConnectionString("AivenPostgres")
+            ?? throw new InvalidOperationException("Database is not configured");
+        await using var db = new NpgsqlConnection(cs);
+        await db.OpenAsync(ct);
+        await using var cmd = new NpgsqlCommand(@"
+            UPDATE public.notifications SET read_at=NOW()
+            WHERE user_id=@reader AND read_at IS NULL;", db);
+        cmd.Parameters.AddWithValue("reader", actor.UserId);
+        var changed = await cmd.ExecuteNonQueryAsync(ct);
+        return Results.Ok(new { message = $"Đã đọc {changed} thông báo." });
+    }
+    catch (OperationCanceledException) when (ct.IsCancellationRequested) { return Results.StatusCode(499); }
+    catch (Exception ex)
+    {
+        app.Logger.LogError("Mark all notifications read failed: {Type}", ex.GetType().Name);
+        return Results.Json(new { message = "Không cập nhật được thông báo." }, statusCode: 503);
     }
 });
 
@@ -2872,6 +3293,16 @@ app.MapPost("/api/loan-renewals/{requestId:long}/review", async (long requestId,
             reject.Parameters.AddWithValue("id", requestId);
             reject.Parameters.AddWithValue("note", input.Note!.Trim());
             await reject.ExecuteNonQueryAsync(ct);
+            await using (var notice = new NpgsqlCommand(@"
+                INSERT INTO public.notifications(user_id,notification_type,title,body)
+                SELECT requested_by_user_id,'loan_renewal_review',@title,@body
+                FROM public.borrow_renewal_requests WHERE request_id=@id;", db, tx))
+            {
+                notice.Parameters.AddWithValue("id", requestId);
+                notice.Parameters.AddWithValue("title", "Yêu cầu gia hạn bị từ chối");
+                notice.Parameters.AddWithValue("body", $"Yêu cầu gia hạn #{requestId} bị từ chối. Hạn trả không đổi.");
+                await notice.ExecuteNonQueryAsync(ct);
+            }
             await tx.CommitAsync(ct);
             return Results.Ok(new { message = "Đã từ chối yêu cầu gia hạn." });
         }
@@ -2934,6 +3365,16 @@ app.MapPost("/api/loan-renewals/{requestId:long}/review", async (long requestId,
             approve.Parameters.AddWithValue("policy", policyId);
             if (await approve.ExecuteNonQueryAsync(ct) != 1)
                 throw new InvalidOperationException("Renewal request changed concurrently");
+        }
+        await using (var notice = new NpgsqlCommand(@"
+            INSERT INTO public.notifications(user_id,notification_type,title,body)
+            SELECT requested_by_user_id,'loan_renewal_review',@title,@body
+            FROM public.borrow_renewal_requests WHERE request_id=@id;", db, tx))
+        {
+            notice.Parameters.AddWithValue("id", requestId);
+            notice.Parameters.AddWithValue("title", "Gia hạn đã được duyệt");
+            notice.Parameters.AddWithValue("body", $"Yêu cầu gia hạn #{requestId} được duyệt thêm {days} ngày. Xem hạn mới trong Lịch sử mượn / Trả sách.");
+            await notice.ExecuteNonQueryAsync(ct);
         }
         await tx.CommitAsync(ct);
         return Results.Ok(new { message = $"Đã gia hạn thêm {days} ngày. Tải lại phiếu mượn để xem hạn mới." });
@@ -3039,7 +3480,9 @@ public sealed record RegisterStartRequest(
 public sealed record GuestPreviewRequest(string? GuestClaimCode);
 public sealed record RegisterConfirmRequest(Guid RequestId, string? Otp);
 
+public sealed record BookRatingUpdate(int Score, string? Comment);
 public sealed record AddCopyRequest(string? CopyCode, string? ShelfLocation);
+public sealed record ChangeCopyLocationRequest(string? ShelfLocation);
 
 public sealed record ReferenceCreateRequest(string? Name, string? Detail);
 
