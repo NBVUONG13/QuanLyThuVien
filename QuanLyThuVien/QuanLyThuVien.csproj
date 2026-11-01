@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003" ToolsVersion="15.0">
   <Import Project="$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props" Condition="Exists('$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props')" />
   <PropertyGroup>
     <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
@@ -58,6 +58,12 @@
     <Compile Include="ViewModels\LoginViewModel.cs" />
     <Compile Include="ViewModels\RegisterViewModel.cs" />
     <Compile Include="ViewModels\MainViewModel.cs" />
+    <Compile Include="ViewModels\ReaderManagementViewModel.cs" />
+    <Compile Include="ViewModels\BorrowReturnViewModel.cs" />
+    <Compile Include="ViewModels\BorrowRequestViewModel.cs" />
+    <Compile Include="ViewModels\LibraryMapViewModel.cs" />
+    <Compile Include="ViewModels\FineManagementViewModel.cs" />
+    <Compile Include="ViewModels\NotificationCenterViewModel.cs" />
     <Compile Include="ViewModels\DashboardViewModel.cs" />
     <Compile Include="ViewModels\BookManagementViewModel.cs" />
     <Compile Include="ViewModels\SearchViewModel.cs" />
@@ -80,8 +86,8 @@
       <SubType>Designer</SubType>
     </Page>
     <Page Include="Views\ReaderDetailView.xaml">
-      <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
+      <Generator>MSBuild:Compile</Generator>
     </Page>
     <Page Include="Views\RegisterView.xaml">
       <Generator>MSBuild:Compile</Generator>
@@ -107,6 +113,38 @@
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
     </Page>
+    <Page Include="Views\ReaderManagementView.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Include="Views\WalkInCounterView.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Include="Views\BorrowReturnView.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Include="Views\BorrowRequestView.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Include="Views\FineManagementView.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Include="Views\NotificationCenterView.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Include="Views\LibraryMapView.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Include="Views\BorrowRequestHistoryView.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
   </ItemGroup>
   <ItemGroup>
     <Compile Include="Views\LoginHostWindow.xaml.cs">
@@ -114,6 +152,9 @@
     </Compile>
     <Compile Include="Views\LoginWindow.xaml.cs">
       <DependentUpon>LoginWindow.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Views\ReaderDetailView.xaml.cs">
+      <DependentUpon>ReaderDetailView.xaml</DependentUpon>
     </Compile>
     <Compile Include="Views\RegisterView.xaml.cs">
       <DependentUpon>RegisterView.xaml</DependentUpon>
@@ -132,6 +173,30 @@
     </Compile>
     <Compile Include="Views\HRManagementView.xaml.cs">
       <DependentUpon>HRManagementView.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Views\ReaderManagementView.xaml.cs">
+      <DependentUpon>ReaderManagementView.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Views\WalkInCounterView.xaml.cs">
+      <DependentUpon>WalkInCounterView.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Views\BorrowReturnView.xaml.cs">
+      <DependentUpon>BorrowReturnView.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Views\BorrowRequestView.xaml.cs">
+      <DependentUpon>BorrowRequestView.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Views\FineManagementView.xaml.cs">
+      <DependentUpon>FineManagementView.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Views\NotificationCenterView.xaml.cs">
+      <DependentUpon>NotificationCenterView.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Views\LibraryMapView.xaml.cs">
+      <DependentUpon>LibraryMapView.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Views\BorrowRequestHistoryView.xaml.cs">
+      <DependentUpon>BorrowRequestHistoryView.xaml</DependentUpon>
     </Compile>
   </ItemGroup>
   <ItemGroup>

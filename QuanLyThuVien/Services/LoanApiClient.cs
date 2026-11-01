@@ -392,6 +392,78 @@ namespace QuanLyThuVien.Services
             [DataMember(Name = "notifications")] public List<LibraryNotification> Notifications { get; set; }
         }
 
+        // STEP 72: fine balances and real staff payment records. The WPF never queries SQL.
+        public async Task<LibraryFineListResult> GetFinesAsync(string token, string query)
+        {
+            try
+            {
+                string url = "http://127.0.0.1:5082/api/fines?query=" + Uri.EscapeDataString(query ?? "");
+                using (var req = NewRequest(HttpMethod.Get, url, token))
+                using (var resp = await Http.SendAsync(req))
+                {
+                    var json = await resp.Content.ReadAsStringAsync();
+                    if (!resp.IsSuccessStatusCode)
+                        return new LibraryFineListResult { Message = Error(json, resp.StatusCode) };
+                    var parsed = Parse<FineListResponse>(json);
+                    return new LibraryFineListResult
+                    {
+                        IsSuccess = true,
+                        Fines = parsed == null || parsed.Fines == null ? new List<LibraryFine>() : parsed.Fines
+                    };
+                }
+            }
+            catch (Exception ex) when (ex is HttpRequestException || ex is TaskCanceledException ||
+                                       ex is SerializationException || ex is InvalidOperationException)
+            { return new LibraryFineListResult { Message = "Không tải được danh sách tiền phạt." }; }
+        }
+        public async Task<LibraryFinePaymentListResult> GetFinePaymentsAsync(string token, long fineId)
+        {
+            try
+            {
+                string url = "http://127.0.0.1:5082/api/fines/" + fineId + "/payments";
+                using (var req = NewRequest(HttpMethod.Get, url, token))
+                using (var resp = await Http.SendAsync(req))
+                {
+                    var json = await resp.Content.ReadAsStringAsync();
+                    if (!resp.IsSuccessStatusCode)
+                        return new LibraryFinePaymentListResult { Message = Error(json, resp.StatusCode) };
+                    var parsed = Parse<FinePaymentsResponse>(json);
+                    return new LibraryFinePaymentListResult
+                    {
+                        IsSuccess = true,
+                        Payments = parsed == null || parsed.Payments == null
+                            ? new List<LibraryFinePayment>() : parsed.Payments
+                    };
+                }
+            }
+            catch (Exception ex) when (ex is HttpRequestException || ex is TaskCanceledException ||
+                                       ex is SerializationException || ex is InvalidOperationException)
+            { return new LibraryFinePaymentListResult { Message = "Không tải được lịch sử thanh toán." }; }
+        }
+        public Task<LoanActionResult> PayFineAsync(string token, long fineId, decimal amount,
+            string method, string reference)
+        {
+            return SendActionAsync("http://127.0.0.1:5082/api/fines/" + fineId + "/payments", token,
+                Serialize(new FinePaymentDto { Amount = amount, Method = method, TransactionReference = reference }));
+        }
+        [DataContract]
+        private sealed class FinePaymentDto
+        {
+            [DataMember(Name = "amount")] public decimal Amount { get; set; }
+            [DataMember(Name = "method")] public string Method { get; set; }
+            [DataMember(Name = "transactionReference")] public string TransactionReference { get; set; }
+        }
+        [DataContract]
+        private sealed class FineListResponse
+        {
+            [DataMember(Name = "fines")] public List<LibraryFine> Fines { get; set; }
+        }
+        [DataContract]
+        private sealed class FinePaymentsResponse
+        {
+            [DataMember(Name = "payments")] public List<LibraryFinePayment> Payments { get; set; }
+        }
+
         private static HttpRequestMessage NewRequest(HttpMethod method, string url, string token)
         {
             var request = new HttpRequestMessage(method, url);
@@ -649,6 +721,50 @@ namespace QuanLyThuVien.Services
         public string RiskSummary => (BorrowBlocked ? "ĐANG BỊ CẤM · " : "") +
             "Đang mượn: " + OpenCopies + " · Quá hạn chưa trả: " + OverdueCopies +
             " · Đã trả trễ: " + LateReturns + " · Đã trả: " + CompletedReturns;
+    }
+
+    [DataContract]
+    public sealed class LibraryFine
+    {
+        [DataMember(Name = "fineId")] public long FineId { get; set; }
+        [DataMember(Name = "borrowDetailId")] public long BorrowDetailId { get; set; }
+        [DataMember(Name = "readerUsername")] public string ReaderUsername { get; set; }
+        [DataMember(Name = "readerCode")] public string ReaderCode { get; set; }
+        [DataMember(Name = "readerName")] public string ReaderName { get; set; }
+        [DataMember(Name = "bookTitle")] public string BookTitle { get; set; }
+        [DataMember(Name = "copyCode")] public string CopyCode { get; set; }
+        [DataMember(Name = "fineType")] public string FineType { get; set; }
+        [DataMember(Name = "amount")] public decimal Amount { get; set; }
+        [DataMember(Name = "waivedAmount")] public decimal WaivedAmount { get; set; }
+        [DataMember(Name = "paidAmount")] public decimal PaidAmount { get; set; }
+        [DataMember(Name = "outstanding")] public decimal Outstanding { get; set; }
+        [DataMember(Name = "assessedAt")] public string AssessedAt { get; set; }
+        public string ReaderLabel => (ReaderName ?? "") + " · " + (ReaderCode ?? "");
+        public string FineTypeLabel => FineType == "overdue" ? "Quá hạn" :
+            FineType == "lost" ? "Mất sách" : "Hỏng sách";
+        public string StatusLabel => Outstanding > 0 ? "Còn nợ" : "Đã tất toán";
+    }
+    public sealed class LibraryFineListResult
+    {
+        public bool IsSuccess { get; set; }
+        public string Message { get; set; }
+        public List<LibraryFine> Fines { get; set; } = new List<LibraryFine>();
+    }
+    [DataContract]
+    public sealed class LibraryFinePayment
+    {
+        [DataMember(Name = "paymentId")] public long PaymentId { get; set; }
+        [DataMember(Name = "amount")] public decimal Amount { get; set; }
+        [DataMember(Name = "method")] public string Method { get; set; }
+        [DataMember(Name = "reference")] public string Reference { get; set; }
+        [DataMember(Name = "paidAt")] public string PaidAt { get; set; }
+        public string MethodLabel => Method == "cash" ? "Tiền mặt" : "Chuyển khoản";
+    }
+    public sealed class LibraryFinePaymentListResult
+    {
+        public bool IsSuccess { get; set; }
+        public string Message { get; set; }
+        public List<LibraryFinePayment> Payments { get; set; } = new List<LibraryFinePayment>();
     }
 
     [DataContract]

@@ -2484,6 +2484,8 @@ app.MapPost("/api/loans/checkout", async (CheckoutLoanRequest input,
     }
 });
 
+// STEP 72 — Return + overdue assessment in ONE transaction. No retroactive rewrite.
+// Day boundaries use Vietnam calendar dates; policy version and charged amount are snapshotted.
 app.MapPost("/api/loans/{borrowDetailId:long}/return", async (long borrowDetailId,
     HttpRequest request, SessionService sessions, IConfiguration configuration,
     CancellationToken ct) =>
@@ -2492,34 +2494,356 @@ app.MapPost("/api/loans/{borrowDetailId:long}/return", async (long borrowDetailI
     var actor = sessions.Validate(ReadBearerToken(request));
     if (actor is null) return Results.Unauthorized();
     if (actor.Role is not ("Staff" or "Admin")) return Results.StatusCode(403);
-    if (borrowDetailId <= 0) return Results.BadRequest(new { message = "Ma chi tiet muon khong hop le." });
+    if (borrowDetailId <= 0) return Results.BadRequest(new { message = "Mã chi tiết mượn không hợp lệ." });
     try
     {
         var cs = configuration.GetConnectionString("AivenPostgres")
             ?? throw new InvalidOperationException("Database is not configured.");
         await using var db = new NpgsqlConnection(cs);
         await db.OpenAsync(ct);
-        // Atomic conditional update prevents double return and respects ck_borrow_detail_close.
-        await using var cmd = new NpgsqlCommand(@"
+        await using var tx = await db.BeginTransactionAsync(ct);
+        int lateDays;
+        long owner;
+        bool open;
+        // Lock loan row: duplicate return requests cannot create duplicate fines.
+        await using (var loan = new NpgsqlCommand(@"
+            SELECT b.reader_user_id, (bd.closed_at IS NULL),
+              GREATEST(0, (NOW() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date -
+                           (bd.due_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date)
+            FROM public.borrow_details bd
+            JOIN public.borrows b ON b.borrow_id=bd.borrow_id
+            WHERE bd.borrow_detail_id=@detail FOR UPDATE OF bd;", db, tx))
+        {
+            loan.Parameters.AddWithValue("detail", borrowDetailId);
+            await using var rd = await loan.ExecuteReaderAsync(ct);
+            if (!await rd.ReadAsync(ct)) return Results.NotFound();
+            owner = rd.GetInt64(0);
+            open = rd.GetBoolean(1);
+            lateDays = rd.GetInt32(2);
+        }
+        if (!open) return Results.Conflict(new { message = "Cuốn đã được trả hoặc đã đóng." });
+
+        decimal assessed = 0;
+        long? fineId = null;
+        if (lateDays > 0)
+        {
+            long policyId;
+            int graceDays;
+            decimal dailyFee, cap;
+            await using (var policy = new NpgsqlCommand(@"
+                SELECT policy_version_id, overdue_grace_days, overdue_fee_per_day,
+                       max_overdue_fee_per_detail
+                FROM public.borrowing_policy_versions
+                WHERE effective_at <= NOW()
+                ORDER BY effective_at DESC LIMIT 1;", db, tx))
+            {
+                await using var rd = await policy.ExecuteReaderAsync(ct);
+                if (!await rd.ReadAsync(ct))
+                    return Results.Conflict(new { message = "Chưa có chính sách phạt đang hiệu lực. Liên hệ Admin trước khi trả cuốn quá hạn." });
+                policyId = rd.GetInt64(0);
+                graceDays = rd.GetInt32(1);
+                dailyFee = rd.GetDecimal(2);
+                cap = rd.GetDecimal(3);
+            }
+            assessed = Math.Min(cap, dailyFee * Math.Max(0, lateDays - graceDays));
+            if (assessed > 0)
+            {
+                // Rows created before this feature may already have a fine; never double assess.
+                await using (var already = new NpgsqlCommand(@"
+                    SELECT fine_id FROM public.fines
+                    WHERE borrow_detail_id=@detail AND fine_type='overdue'
+                    ORDER BY fine_id LIMIT 1;", db, tx))
+                {
+                    already.Parameters.AddWithValue("detail", borrowDetailId);
+                    var prior = await already.ExecuteScalarAsync(ct);
+                    if (prior is long priorId) { fineId = priorId; assessed = 0; }
+                }
+                if (fineId is null)
+                {
+                    await using (var insertFine = new NpgsqlCommand(@"
+                        INSERT INTO public.fines(borrow_detail_id,fine_type,amount,waived_amount,
+                                                assessment_policy_version_id,assessed_by_user_id,note)
+                        VALUES(@detail,'overdue',@amount,0,@policy,@actor,@note)
+                        RETURNING fine_id;", db, tx))
+                    {
+                        insertFine.Parameters.AddWithValue("detail", borrowDetailId);
+                        insertFine.Parameters.AddWithValue("amount", assessed);
+                        insertFine.Parameters.AddWithValue("policy", policyId);
+                        insertFine.Parameters.AddWithValue("actor", actor.UserId);
+                        insertFine.Parameters.AddWithValue("note", $"Quá hạn {lateDays} ngày lịch VN; ân hạn {graceDays} ngày. Mức phí theo chính sách #{policyId}.");
+                        fineId = Convert.ToInt64(await insertFine.ExecuteScalarAsync(ct));
+                    }
+                    await using (var notice = new NpgsqlCommand(@"
+                        INSERT INTO public.notifications(user_id,notification_type,title,body)
+                        VALUES(@reader,'fine_assessed',@title,@body);", db, tx))
+                    {
+                        notice.Parameters.AddWithValue("reader", owner);
+                        notice.Parameters.AddWithValue("title", "Phát sinh tiền phạt trả sách quá hạn");
+                        notice.Parameters.AddWithValue("body", $"Cuốn trong phiếu mượn đã trả trễ {lateDays} ngày; phạt {assessed:0} VND. Xem mục TIỀN PHẠT.");
+                        await notice.ExecuteNonQueryAsync(ct);
+                    }
+                }
+            }
+        }
+        await using (var returned = new NpgsqlCommand(@"
             UPDATE public.borrow_details
-            SET returned_at=NOW(), closed_at=NOW(), close_reason='returned'
-            WHERE borrow_detail_id=@detail AND closed_at IS NULL
-            RETURNING borrow_detail_id;", db);
-        cmd.Parameters.AddWithValue("detail", borrowDetailId);
-        var value = await cmd.ExecuteScalarAsync(ct);
-        if (value is null)
-            return Results.Conflict(new { message = "Phieu khong ton tai hoac cuon da duoc tra." });
-        return Results.Ok(new { message = "Da ghi nhan tra cuon thanh cong.", borrowDetailId });
+            SET returned_at=NOW(),closed_at=NOW(),close_reason='returned'
+            WHERE borrow_detail_id=@detail AND closed_at IS NULL RETURNING borrow_detail_id;", db, tx))
+        {
+            returned.Parameters.AddWithValue("detail", borrowDetailId);
+            if (await returned.ExecuteScalarAsync(ct) is null)
+                throw new InvalidOperationException("Loan closed during return.");
+        }
+        await tx.CommitAsync(ct);
+        return Results.Ok(new
+        {
+            message = assessed > 0
+                ? $"Đã nhận trả cuốn. Phát sinh phạt quá hạn {assessed:0} VND."
+                : "Đã ghi nhận trả cuốn thành công.",
+            borrowDetailId,
+            fineId,
+            assessedAmount = assessed
+        });
     }
-    catch (OperationCanceledException) when (ct.IsCancellationRequested)
-    { return Results.StatusCode(499); }
+    catch (PostgresException ex) when (ex.SqlState is PostgresErrorCodes.UndefinedTable or PostgresErrorCodes.UndefinedColumn)
+    { return Results.Json(new { message = "Thiếu bảng/cột quản lý phạt. Kiểm tra schema DB-11." }, statusCode: 503); }
+    catch (OperationCanceledException) when (ct.IsCancellationRequested) { return Results.StatusCode(499); }
     catch (Exception ex)
     {
-        app.Logger.LogError("Return loan failed: {Type}", ex.GetType().Name);
-        return Results.Json(new { message = "Khong the ghi nhan tra sach." }, statusCode: 503);
+        app.Logger.LogError("Return/fine assessment failed: {Type}", ex.GetType().Name);
+        return Results.Json(new { message = "Không thể ghi nhận trả sách và tiền phạt." }, statusCode: 503);
     }
 });
 
+// STEP 72 — Reader sees own fines; Staff/Admin can query by username/code/name.
+// The result contains no phone, citizen-id or authentication details.
+app.MapGet("/api/fines", async (string? query, HttpRequest request, SessionService sessions,
+    IConfiguration configuration, CancellationToken ct) =>
+{
+    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    var actor = sessions.Validate(ReadBearerToken(request));
+    if (actor is null) return Results.Unauthorized();
+    if (actor.Role is not ("Reader" or "Staff" or "Admin")) return Results.StatusCode(403);
+    string term = (query ?? "").Trim();
+    if (term.Length > 80) return Results.BadRequest(new { message = "Từ khóa quá dài." });
+    if (actor.Role == "Reader") term = "";
+    try
+    {
+        var cs = configuration.GetConnectionString("AivenPostgres")
+            ?? throw new InvalidOperationException("Database is not configured.");
+        await using var db = new NpgsqlConnection(cs);
+        await db.OpenAsync(ct);
+        const string sql = @"
+            SELECT f.fine_id, u.username, rp.reader_code, rp.full_name,
+                   bk.title, bc.copy_code, f.fine_type, f.amount, f.waived_amount,
+                   COALESCE(pay.paid,0)::numeric AS paid_amount,
+                   GREATEST(0,f.amount-f.waived_amount-COALESCE(pay.paid,0))::numeric AS outstanding,
+                   TO_CHAR(f.assessed_at AT TIME ZONE 'Asia/Ho_Chi_Minh','DD/MM/YYYY HH24:MI'),
+                   f.borrow_detail_id
+            FROM public.fines f
+            JOIN public.borrow_details bd ON bd.borrow_detail_id=f.borrow_detail_id
+            JOIN public.borrows b ON b.borrow_id=bd.borrow_id
+            JOIN public.users u ON u.user_id=b.reader_user_id
+            JOIN public.reader_profiles rp ON rp.user_id=u.user_id
+            JOIN public.book_copies bc ON bc.copy_id=bd.book_copy_id
+            JOIN public.books bk ON bk.book_id=bc.book_id
+            LEFT JOIN (SELECT fine_id,SUM(amount) AS paid FROM public.fine_payments GROUP BY fine_id)
+              pay ON pay.fine_id=f.fine_id
+            WHERE (@reader_role=FALSE OR b.reader_user_id=@viewer)
+              AND (@term='' OR u.username ILIKE @pattern OR rp.reader_code ILIKE @pattern
+                             OR rp.full_name ILIKE @pattern)
+            ORDER BY (f.amount-f.waived_amount-COALESCE(pay.paid,0)>0) DESC,
+                     f.fine_id DESC LIMIT 200;";
+        await using var cmd = new NpgsqlCommand(sql, db);
+        cmd.Parameters.AddWithValue("reader_role", actor.Role == "Reader");
+        cmd.Parameters.AddWithValue("viewer", actor.UserId);
+        cmd.Parameters.AddWithValue("term", term);
+        cmd.Parameters.AddWithValue("pattern", "%" + term.Replace("%", "\\%").Replace("_", "\\_") + "%");
+        var list = new List<object>();
+        await using var rd = await cmd.ExecuteReaderAsync(ct);
+        while (await rd.ReadAsync(ct)) list.Add(new
+        {
+            fineId = rd.GetInt64(0),
+            readerUsername = rd.GetString(1),
+            readerCode = rd.GetString(2),
+            readerName = rd.GetString(3),
+            bookTitle = rd.GetString(4),
+            copyCode = rd.GetString(5),
+            fineType = rd.GetString(6),
+            amount = rd.GetDecimal(7),
+            waivedAmount = rd.GetDecimal(8),
+            paidAmount = rd.GetDecimal(9),
+            outstanding = rd.GetDecimal(10),
+            assessedAt = rd.GetString(11) + " (VN)",
+            borrowDetailId = rd.GetInt64(12)
+        });
+        return Results.Ok(new { fines = list });
+    }
+    catch (PostgresException ex) when (ex.SqlState is PostgresErrorCodes.UndefinedTable or PostgresErrorCodes.UndefinedColumn)
+    { return Results.Json(new { message = "Thiếu bảng/cột fines hoặc fine_payments." }, statusCode: 503); }
+    catch (OperationCanceledException) when (ct.IsCancellationRequested) { return Results.StatusCode(499); }
+    catch (Exception ex)
+    {
+        app.Logger.LogError("List fines failed: {Type}", ex.GetType().Name);
+        return Results.Json(new { message = "Không tải được khoản phạt." }, statusCode: 503);
+    }
+});
+
+app.MapGet("/api/fines/{fineId:long}/payments", async (long fineId, HttpRequest request,
+    SessionService sessions, IConfiguration configuration, CancellationToken ct) =>
+{
+    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    var actor = sessions.Validate(ReadBearerToken(request));
+    if (actor is null) return Results.Unauthorized();
+    if (actor.Role is not ("Reader" or "Staff" or "Admin")) return Results.StatusCode(403);
+    if (fineId <= 0) return Results.BadRequest(new { message = "Mã phạt không hợp lệ." });
+    try
+    {
+        var cs = configuration.GetConnectionString("AivenPostgres")
+            ?? throw new InvalidOperationException("Database is not configured.");
+        await using var db = new NpgsqlConnection(cs);
+        await db.OpenAsync(ct);
+        await using (var guard = new NpgsqlCommand(@"
+            SELECT b.reader_user_id FROM public.fines f
+            JOIN public.borrow_details bd ON bd.borrow_detail_id=f.borrow_detail_id
+            JOIN public.borrows b ON b.borrow_id=bd.borrow_id
+            WHERE f.fine_id=@id;", db))
+        {
+            guard.Parameters.AddWithValue("id", fineId);
+            var val = await guard.ExecuteScalarAsync(ct);
+            if (val is null) return Results.NotFound();
+            if (actor.Role == "Reader" && Convert.ToInt64(val) != actor.UserId) return Results.NotFound();
+        }
+        await using var cmd = new NpgsqlCommand(@"
+            SELECT payment_id, amount, method, COALESCE(transaction_reference,''),
+                   TO_CHAR(paid_at AT TIME ZONE 'Asia/Ho_Chi_Minh','DD/MM/YYYY HH24:MI')
+            FROM public.fine_payments WHERE fine_id=@id
+            ORDER BY paid_at DESC,payment_id DESC LIMIT 200;", db);
+        cmd.Parameters.AddWithValue("id", fineId);
+        var list = new List<object>();
+        await using var rd = await cmd.ExecuteReaderAsync(ct);
+        while (await rd.ReadAsync(ct)) list.Add(new
+        {
+            paymentId = rd.GetInt64(0),
+            amount = rd.GetDecimal(1),
+            method = rd.GetString(2),
+            reference = rd.GetString(3),
+            paidAt = rd.GetString(4) + " (VN)"
+        });
+        return Results.Ok(new { payments = list });
+    }
+    catch (OperationCanceledException) when (ct.IsCancellationRequested) { return Results.StatusCode(499); }
+    catch (Exception ex)
+    {
+        app.Logger.LogError("List fine payments failed: {Type}", ex.GetType().Name);
+        return Results.Json(new { message = "Không tải được lịch sử thu phạt." }, statusCode: 503);
+    }
+});
+
+app.MapPost("/api/fines/{fineId:long}/payments", async (long fineId, FinePaymentRequest body,
+    HttpRequest request, SessionService sessions, IConfiguration configuration, CancellationToken ct) =>
+{
+    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    var actor = sessions.Validate(ReadBearerToken(request));
+    if (actor is null) return Results.Unauthorized();
+    if (actor.Role is not ("Staff" or "Admin")) return Results.StatusCode(403);
+    string method = (body.Method ?? "").Trim().ToLowerInvariant();
+    string reference = (body.TransactionReference ?? "").Trim();
+    if (fineId <= 0 || body.Amount <= 0 || body.Amount != decimal.Truncate(body.Amount)
+        || body.Amount > 999_999_999_999M)
+        return Results.BadRequest(new { message = "Số tiền phải là số nguyên VND dương." });
+    if (method is not ("cash" or "bank_transfer"))
+        return Results.BadRequest(new { message = "Chỉ hỗ trợ tiền mặt hoặc chuyển khoản ghi nhận thủ công." });
+    if (reference.Length > 120 || (method == "bank_transfer" && reference.Length == 0))
+        return Results.BadRequest(new { message = "Chuyển khoản cần mã tham chiếu, tối đa 120 ký tự." });
+    try
+    {
+        var cs = configuration.GetConnectionString("AivenPostgres")
+            ?? throw new InvalidOperationException("Database is not configured.");
+        await using var db = new NpgsqlConnection(cs);
+        await db.OpenAsync(ct);
+        await using var tx = await db.BeginTransactionAsync(ct);
+        decimal amount, waived;
+        long owner;
+        // Lock the fine, serializing two different staff payments against one outstanding balance.
+        await using (var locked = new NpgsqlCommand(@"
+            SELECT f.amount,f.waived_amount,b.reader_user_id
+            FROM public.fines f
+            JOIN public.borrow_details bd ON bd.borrow_detail_id=f.borrow_detail_id
+            JOIN public.borrows b ON b.borrow_id=bd.borrow_id
+            WHERE f.fine_id=@id FOR UPDATE OF f;", db, tx))
+        {
+            locked.Parameters.AddWithValue("id", fineId);
+            await using var rd = await locked.ExecuteReaderAsync(ct);
+            if (!await rd.ReadAsync(ct)) return Results.NotFound();
+            amount = rd.GetDecimal(0); waived = rd.GetDecimal(1); owner = rd.GetInt64(2);
+        }
+        decimal paid;
+        await using (var sum = new NpgsqlCommand(@"
+            SELECT COALESCE(SUM(amount),0)::numeric FROM public.fine_payments WHERE fine_id=@id;", db, tx))
+        {
+            sum.Parameters.AddWithValue("id", fineId);
+            paid = Convert.ToDecimal(await sum.ExecuteScalarAsync(ct));
+        }
+        if (method == "bank_transfer")
+        {
+            // A bank reference on the same fine may not be recorded twice.
+            await using var duplicate = new NpgsqlCommand(@"
+                SELECT 1 FROM public.fine_payments
+                WHERE fine_id=@fine AND method='bank_transfer'
+                  AND transaction_reference=@ref LIMIT 1;", db, tx);
+            duplicate.Parameters.AddWithValue("fine", fineId);
+            duplicate.Parameters.AddWithValue("ref", reference);
+            if (await duplicate.ExecuteScalarAsync(ct) is not null)
+                return Results.Conflict(new { message = "Mã chuyển khoản đã được ghi nhận cho khoản phạt này." });
+        }
+        decimal outstanding = amount - waived - paid;
+        if (outstanding <= 0 || body.Amount > outstanding)
+            return Results.Conflict(new { message = $"Không thể thu vượt số tiền còn nợ ({Math.Max(0, outstanding):0} VND)." });
+        long paymentId;
+        await using (var payment = new NpgsqlCommand(@"
+            INSERT INTO public.fine_payments(fine_id,amount,method,transaction_reference,
+                                             recorded_by_user_id)
+            VALUES(@fine,@amount,@method,@ref,@actor)
+            RETURNING payment_id;", db, tx))
+        {
+            payment.Parameters.AddWithValue("fine", fineId);
+            payment.Parameters.AddWithValue("amount", body.Amount);
+            payment.Parameters.AddWithValue("method", method);
+            payment.Parameters.Add("ref", NpgsqlDbType.Text).Value =
+                reference.Length > 0 ? (object)reference : DBNull.Value;
+            payment.Parameters.AddWithValue("actor", actor.UserId);
+            paymentId = Convert.ToInt64(await payment.ExecuteScalarAsync(ct));
+        }
+        await using (var audit = new NpgsqlCommand(@"
+            INSERT INTO public.audit_logs(actor_user_id,action,entity_type,entity_id,details)
+            VALUES(@actor,'fine_payment_recorded','fine',@fine,
+                   jsonb_build_object('paymentId',@payment,'amount',@amount,'method',@method));", db, tx))
+        {
+            audit.Parameters.AddWithValue("actor", actor.UserId);
+            audit.Parameters.AddWithValue("fine", fineId.ToString(CultureInfo.InvariantCulture));
+            audit.Parameters.AddWithValue("payment", paymentId);
+            audit.Parameters.AddWithValue("amount", body.Amount);
+            audit.Parameters.AddWithValue("method", method);
+            await audit.ExecuteNonQueryAsync(ct);
+        }
+        await tx.CommitAsync(ct);
+        return Results.Ok(new
+        {
+            paymentId,
+            remaining = outstanding - body.Amount,
+            message = $"Đã ghi nhận thu {body.Amount:0} VND. Còn nợ {outstanding - body.Amount:0} VND."
+        });
+    }
+    catch (PostgresException ex) when (ex.SqlState is PostgresErrorCodes.UndefinedTable or PostgresErrorCodes.UndefinedColumn)
+    { return Results.Json(new { message = "Thiếu schema quản lý phạt/thanh toán/audit DB-11." }, statusCode: 503); }
+    catch (OperationCanceledException) when (ct.IsCancellationRequested) { return Results.StatusCode(499); }
+    catch (Exception ex)
+    {
+        app.Logger.LogError("Pay fine failed: {Type}", ex.GetType().Name);
+        return Results.Json(new { message = "Không ghi nhận được thanh toán." }, statusCode: 503);
+    }
+});
 
 // STEP 58 — Reader creates a multi-title REQUEST; this does not reserve copies or create borrows.
 // All new routes stay Development-only, matching the existing localhost prototype.
@@ -3559,6 +3883,7 @@ public sealed class ReaderProfileEditOtpStore
 public sealed record GuestClaimIssueRequest(bool StaffVerifiedIdentity);
 public sealed record ReaderBorrowAccessRequest(bool Block, string? Reason);
 public sealed record CheckoutLoanRequest(string? ReaderUsername, string? CopyCode, int LoanDays);
+public sealed record FinePaymentRequest(decimal Amount, string? Method, string? TransactionReference);
 
 // Vietnamese-friendly partial search: d/đ, n/N, and accented vowels compare equally.
 // Applied only to public catalog data and active Reader display names on DEV localhost.

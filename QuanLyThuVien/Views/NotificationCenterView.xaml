@@ -1,0 +1,37 @@
+﻿<?xml version='1.0' encoding='utf-8'?>
+<UserControl xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:vm="clr-namespace:QuanLyThuVien.ViewModels" xmlns:views="clr-namespace:QuanLyThuVien.Views" xmlns:d="http://schemas.microsoft.com/expression/blend/2008" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" x:Class="QuanLyThuVien.Views.NotificationCenterView" mc:Ignorable="d" d:DesignWidth="940" d:DesignHeight="680">
+    <StackPanel Margin="0,0,0,24">
+        <TextBlock Text="THÔNG BÁO CỦA TÔI" FontSize="26" FontWeight="Bold" Foreground="#35294D" Margin="0,0,0,7"/>
+        <TextBlock Text="Cập nhật kết quả duyệt đơn mượn và gia hạn từ thư viện." Foreground="#756987" FontSize="13" Margin="0,0,0,15"/>
+        <Border Background="#F1ECFA" CornerRadius="7" Padding="13" Margin="0,0,0,14">
+            <StackPanel>
+                <TextBlock Text="{Binding UnreadLabel}" FontWeight="SemiBold" Foreground="#5B4381"/>
+                <TextBlock Text="{Binding Message}" TextWrapping="Wrap" Foreground="#5B4381" Margin="0,5,0,0"/>
+            </StackPanel>
+        </Border>
+        <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+            <Button Content="LÀM MỚI" Command="{Binding LoadCommand}" Background="#67519A" Foreground="White" BorderThickness="0" Height="36" Width="115" Margin="0,0,10,0"/>
+            <Button Content="ĐÁNH DẤU ĐÃ ĐỌC" Command="{Binding MarkReadCommand}" Background="#EDE7F7" Foreground="#4E3B6E" BorderThickness="0" Height="36" Width="170" Margin="0,0,10,0"/>
+            <Button Content="ĐỌC TẤT CẢ" Command="{Binding MarkAllReadCommand}" Background="#EDE7F7" Foreground="#4E3B6E" BorderThickness="0" Height="36" Width="130"/>
+        </StackPanel>
+        <DataGrid ItemsSource="{Binding Items}" SelectedItem="{Binding Selected, Mode=TwoWay}" AutoGenerateColumns="False" IsReadOnly="True" Height="470" CanUserAddRows="False" CanUserDeleteRows="False" RowHeight="63" SelectionMode="Single" ScrollViewer.HorizontalScrollBarVisibility="Auto">
+            <DataGrid.RowStyle>
+                <Style TargetType="DataGridRow">
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding IsUnread}" Value="True">
+                            <Setter Property="Background" Value="#F1ECFA"/>
+                            <Setter Property="FontWeight" Value="SemiBold"/>
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </DataGrid.RowStyle>
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="Trạng thái" Binding="{Binding ReadStatus}" Width="88"/>
+                <DataGridTextColumn Header="Tiêu đề" Binding="{Binding Title}" Width="190"/>
+                <DataGridTextColumn Header="Nội dung" Binding="{Binding Body}" Width="2*" MinWidth="260"/>
+                <DataGridTextColumn Header="Thời gian" Binding="{Binding CreatedAt}" Width="155"/>
+            </DataGrid.Columns>
+        </DataGrid>
+        <TextBlock Text="Thông báo chỉ hiển thị cho tài khoản đang đăng nhập. Không có SMS/email." Foreground="#897C95" FontSize="11" Margin="0,12,0,0"/>
+    </StackPanel>
+</UserControl>
