@@ -24,6 +24,9 @@ builder.Services.AddSingleton<ReaderProfileEditOtpStore>();
 
 var app = builder.Build();
 
+// Step 75: Admin policy UI endpoints live in their own module.
+app.MapLibraryPolicyEndpoints();
+
 // Explicit one-time CLI path. Never expose bootstrap as HTTP.
 if (args.Contains("--bootstrap-admin", StringComparer.Ordinal))
 {

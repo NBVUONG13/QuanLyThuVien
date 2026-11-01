@@ -39,6 +39,9 @@
         <DataTemplate DataType="{x:Type vm:BorrowRequestViewModel}">
             <views:BorrowRequestView/>
         </DataTemplate>
+        <DataTemplate DataType="{x:Type vm:LibraryPolicyViewModel}">
+            <views:LibraryPolicyView/>
+        </DataTemplate>
         <DataTemplate DataType="{x:Type vm:FineManagementViewModel}">
             <views:FineManagementView/>
         </DataTemplate>
@@ -92,7 +95,7 @@
                         <TextBlock Text="QUẢN TRỊ" Foreground="#BAABD6" Margin="12,24,0,8" FontSize="11"/>
                         <Button Style="{StaticResource SideButton}" Content="Quản lý nhân viên" Command="{Binding StaffCommand}"/>
                         <Button Style="{StaticResource SideButton}" Content="Chấm công / lương" Command="{Binding PendingCommand}" CommandParameter="Chấm công / lương"/>
-                        <Button Style="{StaticResource SideButton}" Content="Chính sách thư viện" Command="{Binding PendingCommand}" CommandParameter="Chính sách thư viện"/>
+                        <Button Style="{StaticResource SideButton}" Content="Chính sách thư viện" Command="{Binding PolicyCommand}"/>
                         <Button Style="{StaticResource SideButton}" Content="Sao lưu dữ liệu" Command="{Binding PendingCommand}" CommandParameter="Sao lưu dữ liệu"/>
                     </StackPanel>
                 </StackPanel>

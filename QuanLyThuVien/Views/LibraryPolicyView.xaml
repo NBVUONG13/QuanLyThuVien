@@ -1,0 +1,91 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<UserControl x:Class="QuanLyThuVien.Views.LibraryPolicyView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d" d:DesignWidth="940" d:DesignHeight="680">
+    <UserControl.Resources>
+        <Style x:Key="PolicyLabel" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Foreground" Value="#5F526F"/>
+            <Setter Property="Margin" Value="0,0,0,5"/>
+        </Style>
+        <Style x:Key="PolicyInput" TargetType="TextBox">
+            <Setter Property="Width" Value="176"/>
+            <Setter Property="Padding" Value="10,7"/>
+            <Setter Property="MaxLength" Value="12"/>
+        </Style>
+    </UserControl.Resources>
+    <StackPanel Margin="0,0,0,24">
+        <TextBlock Text="CHÍNH SÁCH THƯ VIỆN" FontSize="26" FontWeight="Bold" Foreground="#35294D" Margin="0,0,0,8"/>
+        <TextBlock Text="Chỉ Admin thay đổi. Mỗi lần lưu tạo một phiên bản mới, không ghi đè chính sách cũ."
+                   Foreground="#786A8A" TextWrapping="Wrap" Margin="0,0,0,16"/>
+        <Border Background="#F0ECF8" CornerRadius="8" Padding="15" Margin="0,0,0,16">
+            <StackPanel>
+                <TextBlock Text="{Binding CurrentVersion}" FontWeight="SemiBold" Foreground="#493769"/>
+                <TextBlock Text="{Binding Message}" Foreground="#645678" TextWrapping="Wrap" Margin="0,7,0,0"/>
+            </StackPanel>
+        </Border>
+        <TextBlock Text="GIA HẠN SÁCH" FontSize="17" FontWeight="Bold" Foreground="#3E2D59" Margin="0,0,0,11"/>
+        <WrapPanel Margin="0,0,0,13">
+            <StackPanel Margin="0,0,18,12">
+                <TextBlock Text="Tối đa số lượt gia hạn / cuốn (0–10)" Style="{StaticResource PolicyLabel}"/>
+                <TextBox Style="{StaticResource PolicyInput}" Text="{Binding MaxRenewals, UpdateSourceTrigger=PropertyChanged}"/>
+            </StackPanel>
+            <StackPanel Margin="0,0,18,12">
+                <TextBlock Text="Số ngày thêm mỗi lần (1–365)" Style="{StaticResource PolicyLabel}"/>
+                <TextBox Style="{StaticResource PolicyInput}" Text="{Binding RenewalDays, UpdateSourceTrigger=PropertyChanged}"/>
+            </StackPanel>
+        </WrapPanel>
+        <CheckBox Content="Cho Reader gửi yêu cầu gia hạn khi cuốn đã quá hạn"
+                  IsChecked="{Binding AllowOverdueRenewalRequests, Mode=TwoWay}" Margin="0,0,0,10"/>
+        <CheckBox Content="Cho Staff/Admin duyệt gia hạn cuốn quá hạn"
+                  IsChecked="{Binding AllowOverdueRenewalApproval, Mode=TwoWay}" Margin="0,0,0,19"/>
+        <Separator Margin="0,0,0,17"/>
+        <TextBlock Text="PHẠT TRẢ QUÁ HẠN" FontSize="17" FontWeight="Bold" Foreground="#3E2D59" Margin="0,0,0,11"/>
+        <WrapPanel Margin="0,0,0,13">
+            <StackPanel Margin="0,0,18,12">
+                <TextBlock Text="Phí / cuốn / ngày (VND)" Style="{StaticResource PolicyLabel}"/>
+                <TextBox Style="{StaticResource PolicyInput}" Text="{Binding OverdueFeePerDay, UpdateSourceTrigger=PropertyChanged}"/>
+            </StackPanel>
+            <StackPanel Margin="0,0,18,12">
+                <TextBlock Text="Số ngày ân hạn (0–365)" Style="{StaticResource PolicyLabel}"/>
+                <TextBox Style="{StaticResource PolicyInput}" Text="{Binding OverdueGraceDays, UpdateSourceTrigger=PropertyChanged}"/>
+            </StackPanel>
+            <StackPanel Margin="0,0,18,12">
+                <TextBlock Text="Trần phạt / lượt cuốn (VND)" Style="{StaticResource PolicyLabel}"/>
+                <TextBox Style="{StaticResource PolicyInput}" Text="{Binding MaxOverdueFeePerDetail, UpdateSourceTrigger=PropertyChanged}"/>
+            </StackPanel>
+        </WrapPanel>
+        <TextBlock Text="Ghi chú phiên bản (không chứa thông tin cá nhân)" Style="{StaticResource PolicyLabel}"/>
+        <TextBox Text="{Binding Notes, UpdateSourceTrigger=PropertyChanged}" MaxLength="500" TextWrapping="Wrap"
+                 AcceptsReturn="True" Height="64" Padding="10" Margin="0,0,0,16"/>
+        <WrapPanel Margin="0,0,0,20">
+            <Button Content="LƯU PHIÊN BẢN CHÍNH SÁCH MỚI" Command="{Binding SaveCommand}" Background="#24734D"
+                    Foreground="White" Padding="18,10" BorderThickness="0" Margin="0,0,11,8"/>
+            <Button Content="LÀM MỚI TỪ DATABASE" Command="{Binding ReloadCommand}" Background="#6A5396"
+                    Foreground="White" Padding="18,10" BorderThickness="0" Margin="0,0,0,8"/>
+        </WrapPanel>
+        <Separator Margin="0,0,0,15"/>
+        <TextBlock Text="20 PHIÊN BẢN CHÍNH SÁCH GẦN NHẤT" FontSize="16" FontWeight="Bold" Foreground="#3E2D59" Margin="0,0,0,9"/>
+        <DataGrid ItemsSource="{Binding History}" Height="235" IsReadOnly="True" AutoGenerateColumns="False"
+                  CanUserAddRows="False" ScrollViewer.HorizontalScrollBarVisibility="Auto">
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="Phiên bản" Binding="{Binding VersionLabel}" Width="83"/>
+                <DataGridTextColumn Header="Hiệu lực (UTC)" Binding="{Binding EffectiveAt}" Width="175"/>
+                <DataGridTextColumn Header="Lượt" Binding="{Binding MaxRenewals}" Width="58"/>
+                <DataGridTextColumn Header="Ngày" Binding="{Binding RenewalDays}" Width="58"/>
+                <DataGridCheckBoxColumn Header="Cho gửi quá hạn" Binding="{Binding AllowOverdueRenewalRequests}" Width="110"/>
+                <DataGridCheckBoxColumn Header="Cho duyệt quá hạn" Binding="{Binding AllowOverdueRenewalApproval}" Width="112"/>
+                <DataGridTextColumn Header="Phí/ngày" Binding="{Binding OverdueFeePerDay, StringFormat={}{0:N0}}" Width="100"/>
+                <DataGridTextColumn Header="Ân hạn" Binding="{Binding OverdueGraceDays}" Width="75"/>
+                <DataGridTextColumn Header="Trần phạt" Binding="{Binding MaxOverdueFeePerDetail, StringFormat={}{0:N0}}" Width="110"/>
+                <DataGridTextColumn Header="Ghi chú" Binding="{Binding Notes}" Width="210"/>
+            </DataGrid.Columns>
+        </DataGrid>
+        <TextBlock Text="Các khoản phạt đã ghi vẫn giữ số tiền và phiên bản chính sách cũ. Thay đổi không có hiệu lực hồi tố."
+                   Foreground="#796B88" TextWrapping="Wrap" Margin="0,10,0,0"/>
+    </StackPanel>
+</UserControl>

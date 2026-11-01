@@ -34,6 +34,7 @@ namespace QuanLyThuVien.ViewModels
             RequestsCommand = new AsyncCommand(_ => NavigateRequestsAsync(), _ => IsAuthenticated);
             NotificationsCommand = new AsyncCommand(_ => NavigateNotificationsAsync(), _ => IsReader);
             FinesCommand = new AsyncCommand(_ => NavigateFinesAsync(), _ => IsAuthenticated);
+            PolicyCommand = new AsyncCommand(_ => NavigatePolicyAsync(), _ => IsAdmin);
             LogoutCommand = new AsyncCommand(_ => LogoutAsync());
             BackFromReaderDetailsCommand = new ActionCommand(_ =>
             {
@@ -57,6 +58,7 @@ namespace QuanLyThuVien.ViewModels
         public BorrowRequestViewModel Requests { get; private set; }
         public NotificationCenterViewModel Notifications { get; private set; }
         public FineManagementViewModel FinePage { get; private set; }
+        public LibraryPolicyViewModel PolicyPage { get; private set; }
         private string _notificationsMenuText = "THÔNG BÁO";
         public string NotificationsMenuText { get => _notificationsMenuText; private set => Set(ref _notificationsMenuText, value); }
         public object CurrentPage { get => _currentPage; private set => Set(ref _currentPage, value); }
@@ -78,6 +80,7 @@ namespace QuanLyThuVien.ViewModels
         public ICommand RequestsCommand { get; }
         public ICommand NotificationsCommand { get; }
         public ICommand FinesCommand { get; }
+        public ICommand PolicyCommand { get; }
         public ICommand LogoutCommand { get; }
         public ICommand PendingCommand { get; }
         public ICommand BackFromReaderDetailsCommand { get; }
@@ -107,13 +110,18 @@ namespace QuanLyThuVien.ViewModels
             (RequestsCommand as AsyncCommand)?.Refresh();
             (NotificationsCommand as AsyncCommand)?.Refresh();
             (FinesCommand as AsyncCommand)?.Refresh();
+            (PolicyCommand as AsyncCommand)?.Refresh();
 
             // Reuse one BookManagementViewModel for all browsing/search/metadata/copies work.
             Books = new BookManagementViewModel(_token, Role);
             Books.BorrowBookRequested += book => { _ = OpenBorrowRequestFromBookAsync(book); };
             MapPage = new LibraryMapViewModel(_token);
             Books.RouteToBookRequested += book => { _ = NavigateMapAsync(book.BookId); };
-            if (IsAdmin) Staff = new HRManagementViewModel(_token);
+            if (IsAdmin)
+            {
+                Staff = new HRManagementViewModel(_token);
+                PolicyPage = new LibraryPolicyViewModel(_token);
+            }
             ReaderPanel = new ReaderManagementViewModel(_token, Role);
             ReaderPanel.ReaderDetailRequested += (sender, args) =>
             {
@@ -243,6 +251,13 @@ namespace QuanLyThuVien.ViewModels
             if (!IsReader || Notifications == null) return;
             CurrentPage = Notifications;
             await Notifications.LoadAsync();
+        }
+
+        private async Task NavigatePolicyAsync()
+        {
+            if (!IsAdmin || PolicyPage == null) return;
+            CurrentPage = PolicyPage;
+            await PolicyPage.LoadAsync();
         }
 
         private async Task NavigateFinesAsync()
