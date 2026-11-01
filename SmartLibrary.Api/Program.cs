@@ -21,6 +21,8 @@ builder.Services.AddSingleton<RegistrationService>();
 builder.Services.AddSingleton<SessionService>();
 // Developer-only one-time codes for Reader profile changes; no new file or database table.
 builder.Services.AddSingleton<ReaderProfileEditOtpStore>();
+// STEP 76: automatic Reader tier promotion/demotion, no Admin action.
+builder.Services.AddHostedService<ReaderTierAutoHostedService>();
 
 var app = builder.Build();
 
@@ -2598,6 +2600,18 @@ app.MapPost("/api/loans/{borrowDetailId:long}/return", async (long borrowDetailI
                 throw new InvalidOperationException("Loan closed during return.");
         }
         await tx.CommitAsync(ct);
+        // STEP 76: Best effort after the loan return is committed. A tier/audit
+        // failure must NEVER undo an already accepted book return.
+        try
+        {
+            await using var tierTx = await db.BeginTransactionAsync(ct);
+            await ReaderTierAutomation.ApplyAsync(db, tierTx, owner, ct, borrowDetailId);
+            await tierTx.CommitAsync(ct);
+        }
+        catch (Exception rankError)
+        {
+            app.Logger.LogWarning("Reader tier assessment deferred: {Type}", rankError.GetType().Name);
+        }
         return Results.Ok(new
         {
             message = assessed > 0
