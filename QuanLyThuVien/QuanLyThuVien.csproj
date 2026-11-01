@@ -56,6 +56,7 @@
     <Compile Include="Services\LibraryPolicyApiClient.cs" />
     <Compile Include="Services\LoanApiClient.cs" />
     <Compile Include="ViewModels\LibraryPolicyViewModel.cs" />
+    <Compile Include="ViewModels\LibraryReportsViewModel.cs" />
     <Compile Include="ViewModels\MvvmBase.cs" />
     <Compile Include="ViewModels\LoginViewModel.cs" />
     <Compile Include="ViewModels\RegisterViewModel.cs" />
@@ -79,7 +80,15 @@
     <Compile Include="Services\StaffAdminApiClient.cs" />
   </ItemGroup>
   <ItemGroup>
+    <Page Include="Views\BookInventoryView.xaml">
+      <SubType>Designer</SubType>
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
     <Page Include="Views\LibraryPolicyView.xaml">
+      <SubType>Designer</SubType>
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+    <Page Include="Views\LibraryReportsView.xaml">
       <SubType>Designer</SubType>
       <Generator>MSBuild:Compile</Generator>
     </Page>
@@ -153,8 +162,14 @@
     </Page>
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="Views\BookInventoryView.xaml.cs">
+      <DependentUpon>BookInventoryView.xaml</DependentUpon>
+    </Compile>
     <Compile Include="Views\LibraryPolicyView.xaml.cs">
       <DependentUpon>LibraryPolicyView.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Views\LibraryReportsView.xaml.cs">
+      <DependentUpon>LibraryReportsView.xaml</DependentUpon>
     </Compile>
     <Compile Include="Views\LoginHostWindow.xaml.cs">
       <DependentUpon>LoginHostWindow.xaml</DependentUpon>

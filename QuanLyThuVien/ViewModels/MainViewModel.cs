@@ -25,9 +25,12 @@ namespace QuanLyThuVien.ViewModels
             _token = token;
             Dashboard = new DashboardViewModel(token);
             HomeCommand = new AsyncCommand(_ => NavigateHomeAsync());
+            InventoryCommand = new AsyncCommand(_ => NavigateInventoryAsync(), _ => CanManage);
             MapCommand = new AsyncCommand(_ => NavigateMapAsync(), _ => IsAuthenticated);
             DashboardCommand = new AsyncCommand(_ => NavigateDashboardAsync());
+            ReportsCommand = new AsyncCommand(_ => NavigateReportsAsync(), _ => IsAdmin);
             StaffCommand = new AsyncCommand(_ => NavigateStaffAsync(), _ => IsAdmin);
+            AttendanceCommand = new AsyncCommand(_ => NavigateAttendanceAsync(), _ => CanManage);
             ReaderCommand = new AsyncCommand(_ => NavigateReadersAsync(), _ => IsAuthenticated);
             LoansCommand = new AsyncCommand(_ => NavigateLoansAsync(), _ => IsAuthenticated);
             CounterCommand = new AsyncCommand(_ => NavigateCounterAsync(), _ => CanManage);
@@ -49,6 +52,7 @@ namespace QuanLyThuVien.ViewModels
         }
 
         public DashboardViewModel Dashboard { get; }
+        public LibraryReportsViewModel ReportsPage { get; private set; }
         public BookManagementViewModel Books { get; private set; }
         public LibraryMapViewModel MapPage { get; private set; }
         public HRManagementViewModel Staff { get; private set; }
@@ -71,9 +75,12 @@ namespace QuanLyThuVien.ViewModels
         public bool CanManage => IsAuthenticated && (Role == "Staff" || Role == "Admin");
 
         public ICommand HomeCommand { get; }
+        public ICommand InventoryCommand { get; }
         public ICommand MapCommand { get; }
         public ICommand DashboardCommand { get; }
+        public ICommand ReportsCommand { get; }
         public ICommand StaffCommand { get; }
+        public ICommand AttendanceCommand { get; }
         public ICommand ReaderCommand { get; }
         public ICommand LoansCommand { get; }
         public ICommand CounterCommand { get; }
@@ -103,6 +110,9 @@ namespace QuanLyThuVien.ViewModels
             Notify(nameof(IsAdmin));
             Notify(nameof(CanManage));
             (StaffCommand as AsyncCommand)?.Refresh();
+            (ReportsCommand as AsyncCommand)?.Refresh();
+            (AttendanceCommand as AsyncCommand)?.Refresh();
+            (InventoryCommand as AsyncCommand)?.Refresh();
             (MapCommand as AsyncCommand)?.Refresh();
             (ReaderCommand as AsyncCommand)?.Refresh();
             (LoansCommand as AsyncCommand)?.Refresh();
@@ -117,11 +127,9 @@ namespace QuanLyThuVien.ViewModels
             Books.BorrowBookRequested += book => { _ = OpenBorrowRequestFromBookAsync(book); };
             MapPage = new LibraryMapViewModel(_token);
             Books.RouteToBookRequested += book => { _ = NavigateMapAsync(book.BookId); };
-            if (IsAdmin)
-            {
-                Staff = new HRManagementViewModel(_token);
-                PolicyPage = new LibraryPolicyViewModel(_token);
-            }
+            if (CanManage) Staff = new HRManagementViewModel(_token, Role);
+            if (IsAdmin) PolicyPage = new LibraryPolicyViewModel(_token);
+            if (IsAdmin) ReportsPage = new LibraryReportsViewModel(_token);
             ReaderPanel = new ReaderManagementViewModel(_token, Role);
             ReaderPanel.ReaderDetailRequested += (sender, args) =>
             {
@@ -191,6 +199,14 @@ namespace QuanLyThuVien.ViewModels
             await Books.InitializeAsync();
         }
 
+        private async Task NavigateInventoryAsync()
+        {
+            if (!CanManage || Books == null) return;
+            CurrentPage = new BookInventoryPage(Books);
+            await Books.InitializeAsync();
+            await Books.RefreshInventoryAsync();
+        }
+
         private async Task NavigateMapAsync(long bookId = 0)
         {
             if (!IsAuthenticated || MapPage == null) return;
@@ -205,9 +221,23 @@ namespace QuanLyThuVien.ViewModels
             await Dashboard.LoadAsync();
         }
 
+        private async Task NavigateReportsAsync()
+        {
+            if (!IsAdmin || ReportsPage == null) return;
+            CurrentPage = ReportsPage;
+            await ReportsPage.LoadAsync();
+        }
+
         private async Task NavigateStaffAsync()
         {
             if (!IsAdmin || Staff == null) return;
+            CurrentPage = Staff;
+            await Staff.LoadAsync();
+        }
+
+        private async Task NavigateAttendanceAsync()
+        {
+            if (!CanManage || Staff == null) return;
             CurrentPage = Staff;
             await Staff.LoadAsync();
         }
@@ -274,5 +304,15 @@ namespace QuanLyThuVien.ViewModels
             try { await _auth.LogoutAsync(_token); }
             finally { LogoutRequested?.Invoke(this, EventArgs.Empty); }
         }
+    }
+}
+
+namespace QuanLyThuVien.ViewModels
+{
+    // Thin navigation wrapper: reuse BookManagementViewModel, no duplicate inventory VM.
+    public sealed class BookInventoryPage
+    {
+        public BookManagementViewModel Books { get; private set; }
+        public BookInventoryPage(BookManagementViewModel books) { Books = books; }
     }
 }

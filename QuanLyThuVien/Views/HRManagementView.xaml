@@ -1,15 +1,21 @@
 <UserControl x:Class="QuanLyThuVien.Views.HRManagementView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
-    <StackPanel>
-        <DockPanel Margin="0,0,0,14">
-            <Button Content="Làm mới" Command="{Binding RefreshCommand}" DockPanel.Dock="Right" Width="110" Height="35"/>
-            <TextBlock Text="Quản lý nhân viên (Admin)" FontSize="26" FontWeight="Bold"/>
-        </DockPanel>
-        <TextBlock Text="{Binding Status}" Foreground="#2563EB" Margin="0,0,0,12" TextWrapping="Wrap"/>
-        <!-- ItemsSource la ObservableCollection<StaffItem> cua HRManagementViewModel.
+    <UserControl.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolVisibility"/>
+    </UserControl.Resources>
+    <TabControl BorderThickness="0" Background="Transparent">
+        <TabItem Header="NHÂN SỰ / CHẤM CÔNG">
+            <StackPanel>
+                <StackPanel Visibility="{Binding IsAdmin, Converter={StaticResource BoolVisibility}}">
+                    <DockPanel Margin="0,0,0,14">
+                        <Button Content="Làm mới" Command="{Binding RefreshCommand}" DockPanel.Dock="Right" Width="110" Height="35"/>
+                        <TextBlock Text="Quản lý nhân viên (Admin)" FontSize="26" FontWeight="Bold"/>
+                    </DockPanel>
+                    <TextBlock Text="{Binding Status}" Foreground="#2563EB" Margin="0,0,0,12" TextWrapping="Wrap"/>
+                    <!-- ItemsSource la ObservableCollection<StaffItem> cua HRManagementViewModel.
              Moi cot co MinWidth; DataGrid cuon ngang NỘI BỘ khi cua so hep. -->
-        <DataGrid ItemsSource="{Binding Staff}" IsReadOnly="True" AutoGenerateColumns="False"
+                    <DataGrid ItemsSource="{Binding Staff}" IsReadOnly="True" AutoGenerateColumns="False"
                   Height="280" MinWidth="0" HorizontalAlignment="Stretch"
                   FontSize="14" RowHeight="30" ColumnHeaderHeight="38"
                   HeadersVisibility="Column" GridLinesVisibility="Horizontal"
@@ -17,28 +23,135 @@
                   CanUserAddRows="False" CanUserDeleteRows="False"
                   ScrollViewer.HorizontalScrollBarVisibility="Auto"
                   ScrollViewer.VerticalScrollBarVisibility="Auto">
-            <DataGrid.Columns>
-                <DataGridTextColumn Header="User ID" Binding="{Binding UserId}" Width="82" MinWidth="80"/>
-                <DataGridTextColumn Header="Username" Binding="{Binding Username}" Width="*" MinWidth="132"/>
-                <DataGridTextColumn Header="Họ tên" Binding="{Binding FullName}" Width="2*" MinWidth="190"/>
-                <DataGridTextColumn Header="Mã nhân viên" Binding="{Binding StaffCode}" Width="*" MinWidth="150"/>
-                <DataGridTextColumn Header="Quyền" Binding="{Binding Role}" Width="94" MinWidth="90"/>
-                <DataGridTextColumn Header="Trạng thái" Binding="{Binding Status}" Width="108" MinWidth="100"/>
-            </DataGrid.Columns>
-        </DataGrid>
-        <Border Padding="18" Background="White" CornerRadius="8" Margin="0,18,0,0">
-            <StackPanel>
-                <TextBlock Text="Tạo tài khoản Staff" FontWeight="Bold" FontSize="18" Margin="0,0,0,12"/>
-                <TextBlock Text="Username"/>
-                <TextBox Text="{Binding Username, UpdateSourceTrigger=PropertyChanged}" Height="34" Margin="0,3,0,8"/>
-                <TextBlock Text="Họ tên"/>
-                <TextBox Text="{Binding FullName, UpdateSourceTrigger=PropertyChanged}" Height="34" Margin="0,3,0,8"/>
-                <TextBlock Text="Mã nhân viên"/>
-                <TextBox Text="{Binding StaffCode, UpdateSourceTrigger=PropertyChanged}" Height="34" Margin="0,3,0,8"/>
-                <TextBlock Text="Mật khẩu Staff (theo quy tắc của API hiện tại)"/>
-                <PasswordBox x:Name="StaffPassword" Height="34" Margin="0,3,0,10"/>
-                <Button Content="TẠO STAFF" Width="170" Height="39" HorizontalAlignment="Left" Click="CreateStaff_Click" />
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="User ID" Binding="{Binding UserId}" Width="82" MinWidth="80"/>
+                            <DataGridTextColumn Header="Username" Binding="{Binding Username}" Width="*" MinWidth="132"/>
+                            <DataGridTextColumn Header="Họ tên" Binding="{Binding FullName}" Width="2*" MinWidth="190"/>
+                            <DataGridTextColumn Header="Mã nhân viên" Binding="{Binding StaffCode}" Width="*" MinWidth="150"/>
+                            <DataGridTextColumn Header="Quyền" Binding="{Binding Role}" Width="94" MinWidth="90"/>
+                            <DataGridTextColumn Header="Trạng thái" Binding="{Binding Status}" Width="108" MinWidth="100"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <Border Padding="18" Background="White" CornerRadius="8" Margin="0,18,0,0">
+                        <StackPanel>
+                            <TextBlock Text="Tạo tài khoản Staff" FontWeight="Bold" FontSize="18" Margin="0,0,0,12"/>
+                            <TextBlock Text="Username"/>
+                            <TextBox Text="{Binding Username, UpdateSourceTrigger=PropertyChanged}" Height="34" Margin="0,3,0,8"/>
+                            <TextBlock Text="Họ tên"/>
+                            <TextBox Text="{Binding FullName, UpdateSourceTrigger=PropertyChanged}" Height="34" Margin="0,3,0,8"/>
+                            <TextBlock Text="Mã nhân viên"/>
+                            <TextBox Text="{Binding StaffCode, UpdateSourceTrigger=PropertyChanged}" Height="34" Margin="0,3,0,8"/>
+                            <TextBlock Text="Mật khẩu Staff (theo quy tắc của API hiện tại)"/>
+                            <PasswordBox x:Name="StaffPassword" Height="34" Margin="0,3,0,10"/>
+                            <Button Content="TẠO STAFF" Width="170" Height="39" HorizontalAlignment="Left" Click="CreateStaff_Click" />
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+                <Border Background="White" CornerRadius="9" Padding="18" Margin="0,0,0,16">
+                    <StackPanel>
+                        <TextBlock Text="CHẤM CÔNG NHÂN VIÊN" FontSize="22" FontWeight="Bold" Foreground="#382853" Margin="0,0,0,8"/>
+                        <TextBlock Text="Staff tự check-in/check-out. Admin xem lịch sử các ca; giờ được tính theo giờ Việt Nam (UTC+7)."
+                           Foreground="#64748B" TextWrapping="Wrap" Margin="0,0,0,15"/>
+                        <StackPanel Visibility="{Binding IsStaff, Converter={StaticResource BoolVisibility}}" Orientation="Horizontal" Margin="0,0,0,12">
+                            <Button Content="BẮT ĐẦU CA (CHECK-IN)" Command="{Binding CheckInCommand}"
+                            Background="#227A5F" Foreground="White" BorderThickness="0" Height="40" Width="195" Margin="0,0,10,0"/>
+                            <Button Content="KẾT THÚC CA (CHECK-OUT)" Command="{Binding CheckOutCommand}"
+                            Background="#7351A4" Foreground="White" BorderThickness="0" Height="40" Width="210"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+                            <TextBlock Text="Tháng (YYYY-MM):" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                            <TextBox Text="{Binding Month, UpdateSourceTrigger=PropertyChanged}" Width="105" Height="34"
+                             Padding="7,6" Margin="0,0,10,0"/>
+                            <Button Content="LÀM MỚI" Command="{Binding RefreshCommand}" Height="34" Width="110"/>
+                        </StackPanel>
+                        <TextBlock Text="{Binding AttendanceStatus}" Foreground="#2D5A9C" TextWrapping="Wrap" Margin="0,0,0,12"/>
+                        <WrapPanel Margin="0,0,0,12">
+                            <TextBlock Text="Tổng giờ đã chốt: " FontWeight="SemiBold"/>
+                            <TextBlock Text="{Binding TotalHours, StringFormat={}{0:N2}}" Foreground="#4B3681" FontWeight="Bold" Margin="0,0,20,0"/>
+                            <TextBlock Text="Ca đang mở: " FontWeight="SemiBold"/>
+                            <TextBlock Text="{Binding OpenCount}" Foreground="#4B3681" FontWeight="Bold"/>
+                        </WrapPanel>
+                        <DataGrid ItemsSource="{Binding Shifts}" AutoGenerateColumns="False" IsReadOnly="True"
+                          Height="320" CanUserAddRows="False" AlternatingRowBackground="#F3F0F9"
+                          ScrollViewer.HorizontalScrollBarVisibility="Auto">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Mã NV" Binding="{Binding StaffCode}" Width="110"/>
+                                <DataGridTextColumn Header="Nhân viên" Binding="{Binding FullName}" Width="*" MinWidth="150"/>
+                                <DataGridTextColumn Header="Check-in (VN)" Binding="{Binding CheckIn}" Width="153"/>
+                                <DataGridTextColumn Header="Check-out (VN)" Binding="{Binding CheckOut}" Width="153"/>
+                                <DataGridTextColumn Header="Giờ làm" Binding="{Binding Hours, StringFormat=N2}" Width="82"/>
+                                <DataGridTextColumn Header="Trạng thái" Binding="{Binding ShiftStatus}" Width="130"/>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </StackPanel>
+                </Border>
             </StackPanel>
-        </Border>
-    </StackPanel>
+        </TabItem>
+        <TabItem Header="BẢNG LƯƠNG (ADMIN)" Visibility="{Binding IsAdmin, Converter={StaticResource BoolVisibility}}">
+            <StackPanel Margin="8,18,8,18">
+                <TextBlock Text="BẢNG LƯƠNG NHÂN VIÊN" FontWeight="Bold" FontSize="25" Foreground="#352549" Margin="0,0,0,7"/>
+                <TextBlock Text="Tính lương theo ca đã check-out và đơn giá lưu lúc check-in; không dùng đơn giá hiện tại để tính lại ca cũ."
+                           TextWrapping="Wrap" Foreground="#64748B" Margin="0,0,0,14"/>
+                <Border Background="#F0EDF8" CornerRadius="8" Padding="12" Margin="0,0,0,15">
+                    <TextBlock Text="Lưu ý: chỉ chốt được THÁNG ĐÃ KẾT THÚC. Bảng đã chốt hoặc đã trả sẽ không bị tính lại; việc đánh dấu đã trả không chuyển tiền." TextWrapping="Wrap" Foreground="#493A67"/>
+                </Border>
+                <WrapPanel Margin="0,0,0,14">
+                    <TextBlock Text="Tháng (YYYY-MM):" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                    <TextBox Text="{Binding Month, UpdateSourceTrigger=PropertyChanged}" Width="112" Height="34" Padding="7,6" Margin="0,0,8,0"/>
+                    <Button Content="LÀM MỚI" Command="{Binding RefreshCommand}" Height="34" MinWidth="104" Margin="0,0,8,0"/>
+                    <Button Content="TÍNH / CẬP NHẬT BẢNG NHÁP" Command="{Binding PreparePayrollCommand}" Height="34"
+                            Background="#4F3F84" Foreground="White" BorderThickness="0" Padding="15,0"/>
+                </WrapPanel>
+                <TextBlock Text="{Binding PayrollStatus}" Foreground="#2D5A9C" TextWrapping="Wrap" Margin="0,0,0,14"/>
+                <DataGrid ItemsSource="{Binding PayrollRows}" SelectedItem="{Binding SelectedPayroll, Mode=TwoWay}"
+                          IsReadOnly="True" AutoGenerateColumns="False" Height="280" MinWidth="0"
+                          CanUserAddRows="False" AlternatingRowBackground="#F4F0FA"
+                          ScrollViewer.HorizontalScrollBarVisibility="Auto" Margin="0,0,0,16">
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="Mã NV" Binding="{Binding StaffCode}" Width="110"/>
+                        <DataGridTextColumn Header="Họ tên" Binding="{Binding FullName}" Width="2*" MinWidth="160"/>
+                        <DataGridTextColumn Header="Giá giờ HIỆN TẠI" Binding="{Binding CurrentHourlyRate, StringFormat=N0}" Width="135"/>
+                        <DataGridTextColumn Header="Ca đã đóng" Binding="{Binding ClosedShifts}" Width="95"/>
+                        <DataGridTextColumn Header="Ca mở" Binding="{Binding OpenShifts}" Width="75"/>
+                        <DataGridTextColumn Header="Giờ tính" Binding="{Binding TotalHours, StringFormat=N2}" Width="95"/>
+                        <DataGridTextColumn Header="Tiền lương (VND)" Binding="{Binding TotalAmount, StringFormat=N0}" Width="135"/>
+                        <DataGridTextColumn Header="Trạng thái" Binding="{Binding StatusText}" Width="120"/>
+                    </DataGrid.Columns>
+                </DataGrid>
+                <WrapPanel Margin="0,0,0,20">
+                    <Button Content="XEM CÁC CA ĐÃ TÍNH" Command="{Binding LoadPayrollLinesCommand}" Height="38" Width="178" Margin="0,0,9,9"/>
+                    <Button Content="CHỐT BẢNG LƯƠNG" Command="{Binding FinalizePayrollCommand}" Height="38" Width="163"
+                            Background="#2D755E" Foreground="White" BorderThickness="0" Margin="0,0,9,9"/>
+                    <Button Content="ĐÁNH DẤU ĐÃ TRẢ" Command="{Binding MarkPaidCommand}" Height="38" Width="169"
+                            Background="#604A94" Foreground="White" BorderThickness="0" Margin="0,0,9,9"/>
+                </WrapPanel>
+                <Border Background="White" BorderBrush="#E5DFF0" BorderThickness="1" CornerRadius="8" Padding="16" Margin="0,0,0,18">
+                    <StackPanel>
+                        <TextBlock Text="CẬP NHẬT ĐƠN GIÁ GIỜ CÔNG" FontSize="18" FontWeight="Bold" Foreground="#352549" Margin="0,0,0,9"/>
+                        <TextBlock Text="Chọn nhân viên ở bảng phía trên. Mức mới chỉ áp dụng cho các ca bắt đầu sau lúc cập nhật." TextWrapping="Wrap" Foreground="#64748B" Margin="0,0,0,12"/>
+                        <TextBlock Text="Nhân viên đang chọn:" FontWeight="SemiBold"/>
+                        <TextBlock Text="{Binding SelectedPayroll.FullName, TargetNullValue='Chưa chọn nhân viên'}" Margin="0,2,0,9" Foreground="#563E80"/>
+                        <TextBlock Text="Đơn giá mới (VND/giờ)"/>
+                        <TextBox Text="{Binding NewHourlyRate, UpdateSourceTrigger=PropertyChanged}" Width="195" HorizontalAlignment="Left" Height="34" Margin="0,4,0,9" Padding="8,5"/>
+                        <TextBlock Text="Lý do thay đổi (ít nhất 8 ký tự)"/>
+                        <TextBox Text="{Binding RateReason, UpdateSourceTrigger=PropertyChanged}" Height="63" TextWrapping="Wrap" AcceptsReturn="True" MaxLength="300" Margin="0,4,0,12" Padding="8"/>
+                        <Button Content="LƯU ĐƠN GIÁ MỚI" Command="{Binding UpdateRateCommand}" Width="180" Height="37"
+                                Background="#3F5D97" Foreground="White" BorderThickness="0" HorizontalAlignment="Left"/>
+                    </StackPanel>
+                </Border>
+                <TextBlock Text="CHI TIẾT CÁC CA TRONG BẢNG LƯƠNG ĐÃ CHỌN" FontWeight="Bold" FontSize="18" Foreground="#352549" Margin="0,0,0,12"/>
+                <DataGrid ItemsSource="{Binding PayrollLines}" IsReadOnly="True" AutoGenerateColumns="False"
+                          Height="240" CanUserAddRows="False" ScrollViewer.HorizontalScrollBarVisibility="Auto">
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="Mã ca" Binding="{Binding TimesheetId}" Width="85"/>
+                        <DataGridTextColumn Header="Giờ vào (VN)" Binding="{Binding CheckIn}" Width="160"/>
+                        <DataGridTextColumn Header="Giờ ra (VN)" Binding="{Binding CheckOut}" Width="160"/>
+                        <DataGridTextColumn Header="Số giờ" Binding="{Binding Hours, StringFormat=N2}" Width="80"/>
+                        <DataGridTextColumn Header="Đơn giá lúc check-in" Binding="{Binding HourlyRate, StringFormat=N0}" Width="155"/>
+                        <DataGridTextColumn Header="Thành tiền" Binding="{Binding Amount, StringFormat=N0}" Width="130"/>
+                    </DataGrid.Columns>
+                </DataGrid>
+            </StackPanel>
+        </TabItem>
+    </TabControl>
 </UserControl>

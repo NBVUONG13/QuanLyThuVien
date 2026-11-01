@@ -28,6 +28,14 @@ var app = builder.Build();
 
 // Step 75: Admin policy UI endpoints live in their own module.
 app.MapLibraryPolicyEndpoints();
+// Step 77: Quan ly dau sach, nhap kho va xu ly sach mat/hong.
+app.MapBookInventoryEndpoints();
+// Step 79: Cham cong nhan vien.
+app.MapStaffAttendanceEndpoints();
+// Step 80: Bang luong thang.
+app.MapStaffPayrollEndpoints();
+// Step 81: Bao cao quan tri chi danh cho Admin.
+app.MapLibraryReportsEndpoints();
 
 // Explicit one-time CLI path. Never expose bootstrap as HTTP.
 if (args.Contains("--bootstrap-admin", StringComparer.Ordinal))

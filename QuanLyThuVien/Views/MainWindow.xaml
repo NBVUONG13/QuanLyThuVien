@@ -18,11 +18,17 @@
                 </Trigger>
             </Style.Triggers>
         </Style>
+        <DataTemplate DataType="{x:Type vm:LibraryReportsViewModel}">
+            <views:LibraryReportsView/>
+        </DataTemplate>
         <DataTemplate DataType="{x:Type vm:DashboardViewModel}">
             <views:DashboardView/>
         </DataTemplate>
         <DataTemplate DataType="{x:Type vm:BookManagementViewModel}">
             <views:BookManagementView/>
+        </DataTemplate>
+        <DataTemplate DataType="{x:Type vm:BookInventoryPage}">
+            <views:BookInventoryView DataContext="{Binding Books}"/>
         </DataTemplate>
         <DataTemplate DataType="{x:Type vm:HRManagementViewModel}">
             <views:HRManagementView/>
@@ -60,7 +66,7 @@
             <ColumnDefinition Width="210"/>
             <ColumnDefinition Width="*"/>
         </Grid.ColumnDefinitions>
-        <!-- Left navigation: just ONE home entry for books, search, authors, publishers and genres. -->
+        <!-- Home is only browse/search; Staff/Admin inventory is its own page. -->
         <DockPanel Grid.Column="0" Background="#312746" LastChildFill="True">
             <Button DockPanel.Dock="Bottom" Content="ĐĂNG XUẤT" Command="{Binding LogoutCommand}" Height="43" Margin="15" FontWeight="SemiBold"/>
             <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
@@ -84,18 +90,20 @@
                         <Button Style="{StaticResource SideButton}" Content="Tiền phạt" Command="{Binding FinesCommand}"/>
                     </StackPanel>
                     <StackPanel Visibility="{Binding CanManage, Converter={StaticResource BoolVisibility}}">
+                        <Button Style="{StaticResource SideButton}" Content="📚  QUẢN LÝ SÁCH &amp; KHO" Command="{Binding InventoryCommand}" ToolTip="Thêm/sửa đầu sách, nhập kho, quản lý tác giả, thể loại, NXB và xử lý mất/hỏng"/>
                         <TextBlock Text="NGHIỆP VỤ" Foreground="#BAABD6" Margin="12,24,0,8" FontSize="11"/>
                         <Button Style="{StaticResource SideButton}" Content="Quản lý độc giả" Command="{Binding ReaderCommand}"/>
                         <Button Style="{StaticResource SideButton}" Content="★ DUYỆT ĐƠN MƯỢN" Command="{Binding RequestsCommand}" ToolTip="Danh sách yêu cầu Reader gửi; xem hồ sơ, duyệt hoặc từ chối."/>
                         <Button Style="{StaticResource SideButton}" Content="TIẾP NHẬN TẠI QUẦY" Command="{Binding CounterCommand}" ToolTip="Chuyển Hồ sơ cũ / Guest mới và tạo đơn tại quầy."/>
                         <Button Style="{StaticResource SideButton}" Content="THU TIỀN PHẠT" Command="{Binding FinesCommand}" ToolTip="Xem tiền phạt và ghi nhận thanh toán tại quầy."/>
                         <Button Style="{StaticResource SideButton}" Content="LỊCH SỬ / TRẢ SÁCH" Command="{Binding LoansCommand}" ToolTip="Chỉ xem lịch sử phiếu mượn và ghi nhận trả cuốn."/>
+                        <Button Style="{StaticResource SideButton}" Content="CHẤM CÔNG" Command="{Binding AttendanceCommand}" ToolTip="Staff check-in/check-out; Admin xem các ca làm"/>
                     </StackPanel>
                     <StackPanel Visibility="{Binding IsAdmin, Converter={StaticResource BoolVisibility}}">
                         <TextBlock Text="QUẢN TRỊ" Foreground="#BAABD6" Margin="12,24,0,8" FontSize="11"/>
                         <Button Style="{StaticResource SideButton}" Content="Quản lý nhân viên" Command="{Binding StaffCommand}"/>
-                        <Button Style="{StaticResource SideButton}" Content="Chấm công / lương" Command="{Binding PendingCommand}" CommandParameter="Chấm công / lương"/>
                         <Button Style="{StaticResource SideButton}" Content="Chính sách thư viện" Command="{Binding PolicyCommand}"/>
+                        <Button Style="{StaticResource SideButton}" Content="BÁO CÁO QUẢN TRỊ" Command="{Binding ReportsCommand}" ToolTip="Thống kê mượn/trả, kho và tiền phạt theo khoảng ngày"/>
                         <Button Style="{StaticResource SideButton}" Content="Sao lưu dữ liệu" Command="{Binding PendingCommand}" CommandParameter="Sao lưu dữ liệu"/>
                     </StackPanel>
                 </StackPanel>

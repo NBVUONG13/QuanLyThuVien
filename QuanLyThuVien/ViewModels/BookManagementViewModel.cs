@@ -27,13 +27,6 @@ namespace QuanLyThuVien.ViewModels
         private bool _showSearchSuggestions, _suppressSearchSuggestions;
 
         private string _query = "", _message = "", _copyCode = "", _shelf = "";
-        private BookCopyDto _selectedCopy;
-        private string _locationShelf = "K1", _locationTier = "1", _locationSlot = "A1";
-        public ObservableCollection<string> ShelfOptions { get; } = new ObservableCollection<string> { "K1", "K2", "K3", "K4", "K5", "K6" };
-        public ObservableCollection<string> TierOptions { get; } = new ObservableCollection<string> { "1", "2", "3", "4" };
-        public ObservableCollection<string> SlotOptions { get; } = new ObservableCollection<string>(
-            new[] { "A", "B", "C", "D" }.SelectMany(letter =>
-                Enumerable.Range(1, 4).Select(number => letter + number.ToString())));
         private string _authorName = "", _authorDetail = "", _publisherName = "", _publisherDetail = "", _categoryName = "";
         private CatalogBook _selectedBook;
         private BookDetailResult _detail;
@@ -130,11 +123,18 @@ namespace QuanLyThuVien.ViewModels
             DetailCommand = new AsyncCommand(_ => LoadDetailAsync(), _ => SelectedBook != null);
             CloseDetailCommand = new ActionCommand(_ => DetailExpanded = false);
             AddCopyCommand = new AsyncCommand(_ => AddCopyAsync(), _ => CanManage && SelectedBook != null);
-            SaveCopyLocationCommand = new AsyncCommand(_ => SaveCopyLocationAsync(), _ => CanManage && SelectedBook != null && SelectedCopy != null && !Busy);
             LoadReferencesCommand = new AsyncCommand(_ => LoadReferencesAsync(), _ => !_loadingReferences);
             AddAuthorCommand = new AsyncCommand(_ => AddReferenceAsync("authors", AuthorName, AuthorDetail), _ => CanManage);
             AddPublisherCommand = new AsyncCommand(_ => AddReferenceAsync("publishers", PublisherName, PublisherDetail), _ => CanManage);
             AddCategoryCommand = new AsyncCommand(_ => AddReferenceAsync("categories", CategoryName, ""), _ => CanManage);
+            ReloadInventoryCommand = new AsyncCommand(_ => RefreshInventoryAsync(), _ => CanManage);
+            NewInventoryBookCommand = new ActionCommand(_ => PrepareNextInventoryBook(), _ => CanManage);
+            ResetInventoryFormCommand = new ActionCommand(_ => ResetInventoryBook(), _ => CanManage);
+            SaveInventoryBookCommand = new AsyncCommand(_ => SaveInventoryBookAsync(), _ => CanManage);
+            ReceiveStockCommand = new AsyncCommand(_ => ReceiveStockAsync(), _ => CanManage);
+            SaveStockCopyCommand = new AsyncCommand(_ => SaveStockCopyAsync(), _ => CanManage);
+            ReportLostCommand = new AsyncCommand(_ => ReportIncidentAsync("lost"), _ => CanManage);
+            ReportDamagedCommand = new AsyncCommand(_ => ReportIncidentAsync("damaged"), _ => CanManage);
         }
 
         public bool CanManage { get; }
@@ -143,7 +143,6 @@ namespace QuanLyThuVien.ViewModels
         public event Action<CatalogBook> BorrowBookRequested;
         public event Action<CatalogBook> RouteToBookRequested;
         public ICommand RouteToBookCommand { get; }
-
         public ObservableCollection<CatalogBook> SearchSuggestions { get; } = new ObservableCollection<CatalogBook>();
         public bool ShowSearchSuggestions
         {
@@ -200,40 +199,6 @@ namespace QuanLyThuVien.ViewModels
         }
         public string CopyCode { get => _copyCode; set => Set(ref _copyCode, value); }
         public string Shelf { get => _shelf; set => Set(ref _shelf, value); }
-        public BookCopyDto SelectedCopy
-        {
-            get => _selectedCopy;
-            set
-            {
-                if (!Set(ref _selectedCopy, value)) return;
-                var match = System.Text.RegularExpressions.Regex.Match(
-                    value?.ShelfLocation ?? "",
-                    @"(?i)^(?:DEMO-KE-0?|K)([1-6])-T([1-4])-([A-D][1-4])$");
-                if (match.Success)
-                {
-                    LocationShelf = "K" + match.Groups[1].Value;
-                    LocationTier = match.Groups[2].Value;
-                    LocationSlot = match.Groups[3].Value.ToUpperInvariant();
-                }
-                else
-                {
-                    LocationTier = "1";
-                    LocationSlot = "A1";
-                    var m = System.Text.RegularExpressions.Regex.Match(
-                        value?.ShelfLocation ?? "", @"(?i)^(?:DEMO-KE-0?|K)([1-6])(?=$|[^0-9])");
-                    if (m.Success) LocationShelf = "K" + m.Groups[1].Value;
-                }
-                LocationMessage = value == null
-                    ? "Chọn một cuốn trong danh sách để gán vị trí."
-                    : "Đang chọn mã cuốn " + value.CopyCode + ".";
-                (SaveCopyLocationCommand as AsyncCommand)?.Refresh();
-            }
-        }
-        public string LocationShelf { get => _locationShelf; set => Set(ref _locationShelf, value); }
-        public string LocationTier { get => _locationTier; set => Set(ref _locationTier, value); }
-        public string LocationSlot { get => _locationSlot; set => Set(ref _locationSlot, value); }
-        public string LocationMessage { get => _locationMessage; private set => Set(ref _locationMessage, value); }
-        private string _locationMessage = "Chọn một cuốn trong danh sách để gán vị trí.";
         public string AuthorName { get => _authorName; set => Set(ref _authorName, value); }
         public string AuthorDetail { get => _authorDetail; set => Set(ref _authorDetail, value); }
         public string PublisherName { get => _publisherName; set => Set(ref _publisherName, value); }
@@ -276,8 +241,6 @@ namespace QuanLyThuVien.ViewModels
                 RatingComment = "";
                 RatingMessage = "";
                 Copies.Clear();
-                SelectedCopy = null;
-                LocationMessage = "Chọn một cuốn trong danh sách để gán vị trí.";
                 (DetailCommand as AsyncCommand)?.Refresh();
                 (AddCopyCommand as AsyncCommand)?.Refresh();
                 (BorrowBookCommand as ActionCommand)?.Refresh();
@@ -318,11 +281,18 @@ namespace QuanLyThuVien.ViewModels
         public ICommand DetailCommand { get; }
         public ICommand CloseDetailCommand { get; }
         public ICommand AddCopyCommand { get; }
-        public ICommand SaveCopyLocationCommand { get; }
         public ICommand LoadReferencesCommand { get; }
         public ICommand AddAuthorCommand { get; }
         public ICommand AddPublisherCommand { get; }
         public ICommand AddCategoryCommand { get; }
+        public ICommand ReloadInventoryCommand { get; }
+        public ICommand NewInventoryBookCommand { get; }
+        public ICommand ResetInventoryFormCommand { get; }
+        public ICommand SaveInventoryBookCommand { get; }
+        public ICommand ReceiveStockCommand { get; }
+        public ICommand SaveStockCopyCommand { get; }
+        public ICommand ReportLostCommand { get; }
+        public ICommand ReportDamagedCommand { get; }
 
         private static void Replace<T>(ObservableCollection<T> collection, IEnumerable<T> source)
         {
@@ -336,6 +306,7 @@ namespace QuanLyThuVien.ViewModels
             // Entering Home loads both the books and the horizontal dropdown menus automatically.
             if (!_booksLoaded) await SearchAsync();
             if (!_referencesLoaded) await LoadReferencesAsync();
+            if (CanManage && !_inventoryLoaded) await RefreshInventoryAsync();
         }
 
         // Normalise Vietnamese accents, including Đ/đ, for fast local suggestions.
@@ -562,9 +533,12 @@ namespace QuanLyThuVien.ViewModels
                     return;
                 }
                 Replace(Authors, result.Authors);
+                var preservedPublisherId = FormPublisher == null ? (long?)null : FormPublisher.Id;
                 Replace(Publishers, result.Publishers);
+                FormPublisher = Publishers.FirstOrDefault(p => p.Id == preservedPublisherId);
                 Replace(Categories, result.Categories);
                 _referencesLoaded = true;
+                RebuildInventoryReferences();
             }
             catch (Exception) { Message = "Không tải được menu thể loại/tác giả/NXB."; }
             finally
@@ -649,12 +623,7 @@ namespace QuanLyThuVien.ViewModels
         {
             var result = await _detailApi.GetCopiesAsync(_token, id);
             if (!string.IsNullOrWhiteSpace(result.Error)) { Message = result.Error; return; }
-            if (SelectedBook != null && SelectedBook.BookId == id)
-            {
-                long selectedId = SelectedCopy?.CopyId ?? 0;
-                Replace(Copies, result.Copies);
-                SelectedCopy = Copies.FirstOrDefault(c => c.CopyId == selectedId);
-            }
+            if (SelectedBook != null && SelectedBook.BookId == id) Replace(Copies, result.Copies);
         }
 
         public async Task AddCopyAsync()
@@ -679,38 +648,6 @@ namespace QuanLyThuVien.ViewModels
             finally { Busy = false; }
         }
 
-        // STEP 69: Save location without recreating a physical copy or changing its identity.
-        public async Task SaveCopyLocationAsync()
-        {
-            if (!CanManage || SelectedBook == null || SelectedCopy == null || Busy) return;
-            long bookId = SelectedBook.BookId;
-            long copyId = SelectedCopy.CopyId;
-            if (!ShelfOptions.Contains(LocationShelf) || !TierOptions.Contains(LocationTier) || !SlotOptions.Contains(LocationSlot))
-            {
-                LocationMessage = "Chọn kệ K1-K6, tầng 1-4, ô A1-D4.";
-                return;
-            }
-            var shelfLocation = "DEMO-KE-0" + LocationShelf.Substring(1) + "-T" + LocationTier + "-" + LocationSlot;
-            Busy = true;
-            (SaveCopyLocationCommand as AsyncCommand)?.Refresh();
-            try
-            {
-                var result = await _detailApi.ChangeCopyLocationAsync(_token, bookId, copyId, shelfLocation);
-                LocationMessage = result;
-                if (result == "Đã cập nhật vị trí cuốn sách." && SelectedBook?.BookId == bookId)
-                {
-                    await ReloadCopiesAsync(bookId);
-                    LocationMessage = "Đã gán " + shelfLocation + ". Mở sơ đồ 2D để xem chỉ dẫn.";
-                }
-            }
-            catch (Exception) { LocationMessage = "Không lưu được vị trí cuốn sách."; }
-            finally
-            {
-                Busy = false;
-                (SaveCopyLocationCommand as AsyncCommand)?.Refresh();
-            }
-        }
-
         private async Task AddReferenceAsync(string kind, string name, string detail)
         {
             if (!CanManage) { Message = "Không có quyền quản lý danh mục."; return; }
@@ -721,13 +658,311 @@ namespace QuanLyThuVien.ViewModels
                 if (result.StartsWith("Đã thêm:", StringComparison.Ordinal))
                 {
                     await LoadReferencesAsync();
+                    if (kind == "authors")
+                    {
+                        var added = InventoryAuthors.FirstOrDefault(a =>
+                            string.Equals(a.Name, name.Trim(), StringComparison.OrdinalIgnoreCase));
+                        if (added != null) added.Selected = true;
+                        AuthorName = "";
+                    }
+                    if (kind == "publishers")
+                    {
+                        FormPublisher = Publishers.FirstOrDefault(p =>
+                            string.Equals(p.Name, name.Trim(), StringComparison.OrdinalIgnoreCase));
+                        PublisherName = "";
+                    }
+                    if (kind == "categories")
+                    {
+                        var added = InventoryCategories.FirstOrDefault(c =>
+                            string.Equals(c.Name, name.Trim(), StringComparison.OrdinalIgnoreCase));
+                        if (added != null) added.Selected = true;
+                        CategoryName = "";
+                    }
                     Message = result;
-                    if (kind == "authors") AuthorName = "";
-                    if (kind == "publishers") PublisherName = "";
-                    if (kind == "categories") CategoryName = "";
+                    InventoryMessage = result + " Đã chọn vào form nhập sách.";
                 }
             }
             catch (Exception) { Message = "Không thêm được danh mục nền."; }
         }
+
+        // STEP 77: browse Home and manage inventory on separate pages, sharing this VM.
+        private bool _inventoryLoaded, _inventoryBusy, _formIsVisible = true, _confirmIncident;
+        private long _formBookId;
+        private string _inventoryMessage = "", _formTitle = "", _formIsbn = "", _formDescription = "",
+            _formPublicationYear = "", _batchQuantity = "1", _batchShelf = "",
+            _copyShelf = "", _copyStatus = "active", _copyNote = "",
+            _compensation = "0", _incidentNote = "";
+        private ReferenceEntry _formPublisher;
+        private InventoryBookRow _selectedInventoryBook;
+        private InventoryCopyRow _selectedStockCopy;
+
+        public ObservableCollection<InventoryBookRow> InventoryBooks { get; } = new ObservableCollection<InventoryBookRow>();
+        public ObservableCollection<InventoryCopyRow> StockCopies { get; } = new ObservableCollection<InventoryCopyRow>();
+        public ObservableCollection<StockReferenceChoice> InventoryAuthors { get; } = new ObservableCollection<StockReferenceChoice>();
+        public ObservableCollection<StockReferenceChoice> InventoryCategories { get; } = new ObservableCollection<StockReferenceChoice>();
+        public string[] StockStatusOptions { get; } = { "active", "damaged", "lost", "retired" };
+        public string InventoryMessage { get => _inventoryMessage; private set => Set(ref _inventoryMessage, value); }
+        public bool InventoryBusy { get => _inventoryBusy; private set => Set(ref _inventoryBusy, value); }
+        public long FormBookId { get => _formBookId; private set { if (Set(ref _formBookId, value)) Notify(nameof(FormBookHeader)); } }
+        public string FormBookHeader => FormBookId == 0 ? "TẠO ĐẦU SÁCH MỚI" : "SỬA ĐẦU SÁCH #" + FormBookId;
+        public string FormTitle { get => _formTitle; set => Set(ref _formTitle, value); }
+        public string FormIsbn { get => _formIsbn; set => Set(ref _formIsbn, value); }
+        public string FormDescription { get => _formDescription; set => Set(ref _formDescription, value); }
+        public string FormPublicationYear { get => _formPublicationYear; set => Set(ref _formPublicationYear, value); }
+        public bool FormIsVisible { get => _formIsVisible; set => Set(ref _formIsVisible, value); }
+        public ReferenceEntry FormPublisher { get => _formPublisher; set => Set(ref _formPublisher, value); }
+        public string BatchQuantity { get => _batchQuantity; set => Set(ref _batchQuantity, value); }
+        public string BatchShelf { get => _batchShelf; set => Set(ref _batchShelf, value); }
+        public string CopyShelf { get => _copyShelf; set => Set(ref _copyShelf, value); }
+        public string CopyStatus { get => _copyStatus; set => Set(ref _copyStatus, value); }
+        public string CopyNote { get => _copyNote; set => Set(ref _copyNote, value); }
+        public string Compensation { get => _compensation; set => Set(ref _compensation, value); }
+        public string IncidentNote { get => _incidentNote; set => Set(ref _incidentNote, value); }
+        public bool ConfirmIncident { get => _confirmIncident; set => Set(ref _confirmIncident, value); }
+        public InventoryBookRow SelectedInventoryBook
+        {
+            get => _selectedInventoryBook;
+            set
+            {
+                if (!Set(ref _selectedInventoryBook, value)) return;
+                if (value == null) return;
+                _ = LoadInventoryBookAsync(value.BookId);
+            }
+        }
+        public InventoryCopyRow SelectedStockCopy
+        {
+            get => _selectedStockCopy;
+            set
+            {
+                if (!Set(ref _selectedStockCopy, value)) return;
+                CopyShelf = value?.ShelfLocation ?? "";
+                CopyStatus = value?.ConditionStatus ?? "active";
+                CopyNote = value?.ConditionNote ?? "";
+                Compensation = "0";
+                IncidentNote = "";
+                ConfirmIncident = false;
+                Notify(nameof(SelectedStockLoanText));
+            }
+        }
+        public string SelectedStockLoanText => SelectedStockCopy == null ? "Chưa chọn cuốn"
+            : SelectedStockCopy.OnLoan ? "ĐANG MƯỢN — phiếu #" + SelectedStockCopy.OpenBorrowDetailId
+                : "Đang ở kho — chỉ thay đổi tình trạng, không ghi phạt độc giả.";
+
+        private void RebuildInventoryReferences()
+        {
+            var authorIds = new HashSet<long>(InventoryAuthors.Where(a => a.Selected).Select(a => a.Id));
+            var categoryIds = new HashSet<long>(InventoryCategories.Where(a => a.Selected).Select(a => a.Id));
+            Replace(InventoryAuthors, Authors.Select(a => new StockReferenceChoice(a.Id, a.Name, authorIds.Contains(a.Id))));
+            Replace(InventoryCategories, Categories.Select(c => new StockReferenceChoice(c.Id, c.Name, categoryIds.Contains(c.Id))));
+        }
+        private void PrepareNextInventoryBook()
+        {
+            // Keep selected author/publisher/category; user may enter many books of one series.
+            _selectedInventoryBook = null;
+            Notify(nameof(SelectedInventoryBook));
+            FormBookId = 0;
+            FormTitle = "";
+            FormIsbn = "";
+            FormDescription = "";
+            FormPublicationYear = "";
+            FormIsVisible = true;
+            StockCopies.Clear();
+            SelectedStockCopy = null;
+            InventoryMessage = "Sẵn sàng nhập đầu sách mới; tác giả, NXB, thể loại được giữ nguyên. Chỉ Reset toàn bộ mới xóa chúng.";
+        }
+        private void ResetInventoryBook()
+        {
+            PrepareNextInventoryBook();
+            FormPublisher = null;
+            foreach (var a in InventoryAuthors) a.Selected = false;
+            foreach (var c in InventoryCategories) c.Selected = false;
+            BatchQuantity = "1";
+            BatchShelf = "";
+            InventoryMessage = "Đã Reset toàn bộ form nhập sách.";
+        }
+        public async Task RefreshInventoryAsync()
+        {
+            if (!CanManage || InventoryBusy) return;
+            InventoryBusy = true;
+            try
+            {
+                var result = await _detailApi.InventoryBooksAsync(_token);
+                if (!string.IsNullOrWhiteSpace(result.Error)) { InventoryMessage = result.Error; return; }
+                var selectedId = FormBookId;
+                Replace(InventoryBooks, result.Books);
+                _inventoryLoaded = true;
+                // Set the field without retriggering a network load. The form remains intact.
+                _selectedInventoryBook = InventoryBooks.FirstOrDefault(x => x.BookId == selectedId);
+                Notify(nameof(SelectedInventoryBook));
+                InventoryMessage = "Kho hiện có " + InventoryBooks.Count + " đầu sách. Chọn một hàng để sửa hoặc nhập thêm cuốn.";
+            }
+            catch (Exception) { InventoryMessage = "Không tải được kho sách."; }
+            finally { InventoryBusy = false; }
+        }
+        private async Task LoadInventoryBookAsync(long bookId)
+        {
+            if (!CanManage || InventoryBusy) return;
+            InventoryBusy = true;
+            try
+            {
+                var item = await _detailApi.InventoryBookAsync(_token, bookId);
+                if (!string.IsNullOrWhiteSpace(item.Error) || item.Book == null)
+                { InventoryMessage = item.Error ?? "Không tìm thấy sách."; return; }
+                var b = item.Book;
+                FormBookId = b.BookId;
+                FormTitle = b.Title ?? "";
+                FormIsbn = b.Isbn ?? "";
+                FormDescription = b.Description ?? "";
+                FormPublicationYear = b.PublicationYear.HasValue && b.PublicationYear.Value > 0
+                    ? b.PublicationYear.Value.ToString() : "";
+                FormPublisher = Publishers.FirstOrDefault(x => x.Id == b.PublisherId);
+                FormIsVisible = b.IsVisible;
+                var aIds = new HashSet<long>(b.AuthorIds ?? new List<long>());
+                var cIds = new HashSet<long>(b.CategoryIds ?? new List<long>());
+                foreach (var a in InventoryAuthors) a.Selected = aIds.Contains(a.Id);
+                foreach (var c in InventoryCategories) c.Selected = cIds.Contains(c.Id);
+                await LoadStockCopiesCoreAsync(bookId);
+                InventoryMessage = "Đang sửa đầu sách #" + bookId + ". Có thể sửa tên, ISBN, tác giả, thể loại, NXB và kho.";
+            }
+            catch (Exception) { InventoryMessage = "Không tải được thông tin cần sửa."; }
+            finally { InventoryBusy = false; }
+        }
+        private async Task LoadStockCopiesCoreAsync(long bookId)
+        {
+            var result = await _detailApi.InventoryCopiesAsync(_token, bookId);
+            if (!string.IsNullOrWhiteSpace(result.Error)) { InventoryMessage = result.Error; return; }
+            Replace(StockCopies, result.Copies);
+            SelectedStockCopy = null;
+        }
+        private async Task SaveInventoryBookAsync()
+        {
+            if (!CanManage || InventoryBusy) return;
+            if (string.IsNullOrWhiteSpace(FormTitle) || FormTitle.Trim().Length < 2)
+            { InventoryMessage = "Nhập tên sách ít nhất 2 ký tự."; return; }
+            int year;
+            if (!string.IsNullOrWhiteSpace(FormPublicationYear) &&
+                (!int.TryParse(FormPublicationYear.Trim(), out year) || year < 0 || year > 3000))
+            { InventoryMessage = "Năm xuất bản phải là số từ 0 đến 3000."; return; }
+            InventoryBusy = true;
+            long existingId = FormBookId;
+            try
+            {
+                var book = new InventoryBookEdit
+                {
+                    BookId = FormBookId,
+                    Title = FormTitle.Trim(),
+                    Isbn = (FormIsbn ?? "").Trim(),
+                    Description = (FormDescription ?? "").Trim(),
+                    PublicationYear = string.IsNullOrWhiteSpace(FormPublicationYear) ? (int?)null : int.Parse(FormPublicationYear.Trim()),
+                    PublisherId = FormPublisher == null ? (long?)null : FormPublisher.Id,
+                    AuthorIds = InventoryAuthors.Where(x => x.Selected).Select(x => x.Id).ToList(),
+                    CategoryIds = InventoryCategories.Where(x => x.Selected).Select(x => x.Id).ToList(),
+                    IsVisible = FormIsVisible
+                };
+                var result = await _detailApi.SaveInventoryBookAsync(_token, book);
+                if (!string.IsNullOrWhiteSpace(result.Error)) { InventoryMessage = result.Error; return; }
+                if (existingId == 0)
+                {
+                    // For rapid consecutive intake, preserve author/publisher/category choices.
+                    PrepareNextInventoryBook();
+                    InventoryMessage = "Đã tạo sách #" + result.BookId + ". Nhập tên và ISBN đầu sách tiếp theo; tác giả/NXB/thể loại giữ nguyên.";
+                }
+                else
+                {
+                    InventoryMessage = result.Message;
+                }
+            }
+            catch (Exception) { InventoryMessage = "Không thể lưu thông tin sách."; }
+            finally { InventoryBusy = false; }
+            await RefreshInventoryAsync();
+            await SearchAsync();
+        }
+        private async Task ReceiveStockAsync()
+        {
+            if (!CanManage || InventoryBusy || FormBookId <= 0)
+            { InventoryMessage = "Chọn hoặc lưu đầu sách trước khi nhập cuốn."; return; }
+            int quantity;
+            if (!int.TryParse(BatchQuantity, out quantity) || quantity < 1 || quantity > 100)
+            { InventoryMessage = "Nhập số cuốn từ 1 đến 100."; return; }
+            InventoryBusy = true;
+            long bookId = FormBookId;
+            try
+            {
+                var result = await _detailApi.ReceiveStockAsync(_token, bookId, quantity, (BatchShelf ?? "").Trim());
+                if (!string.IsNullOrWhiteSpace(result.Error)) { InventoryMessage = result.Error; return; }
+                InventoryMessage = result.Message;
+                await LoadStockCopiesCoreAsync(bookId);
+            }
+            catch (Exception) { InventoryMessage = "Không nhập thêm được kho."; }
+            finally { InventoryBusy = false; }
+            await RefreshInventoryAsync();
+            await SearchAsync();
+        }
+        private async Task SaveStockCopyAsync()
+        {
+            if (!CanManage || InventoryBusy || SelectedStockCopy == null) return;
+            if (SelectedStockCopy.OnLoan)
+            { InventoryMessage = "Cuốn đang cho mượn; dùng báo mất/hỏng, không chỉnh trực tiếp."; return; }
+            InventoryBusy = true;
+            long bookId = FormBookId;
+            try
+            {
+                var result = await _detailApi.EditInventoryCopyAsync(_token, new InventoryCopyEdit
+                {
+                    CopyId = SelectedStockCopy.CopyId,
+                    ConditionStatus = CopyStatus,
+                    ShelfLocation = CopyShelf,
+                    ConditionNote = CopyNote
+                });
+                InventoryMessage = result.Error ?? result.Message;
+                if (string.IsNullOrWhiteSpace(result.Error)) await LoadStockCopiesCoreAsync(bookId);
+            }
+            catch (Exception) { InventoryMessage = "Không sửa được bản sao."; }
+            finally { InventoryBusy = false; }
+            await RefreshInventoryAsync();
+        }
+        private async Task ReportIncidentAsync(string kind)
+        {
+            if (!CanManage || InventoryBusy || SelectedStockCopy == null ||
+                !SelectedStockCopy.OnLoan || !SelectedStockCopy.OpenBorrowDetailId.HasValue)
+            { InventoryMessage = "Chỉ báo mất/hỏng trên cuốn đang có phiếu mượn mở."; return; }
+            if (!ConfirmIncident)
+            { InventoryMessage = "Tích ô XÁC NHẬN trước khi đóng phiếu mượn và ghi bồi thường."; return; }
+            decimal amount;
+            string raw = (Compensation ?? "").Trim().Replace(" ", "");
+            // Allow plain integers or culture-specific decimals, not thousands separators.
+            if (!decimal.TryParse(raw, NumberStyles.Number, CultureInfo.CurrentCulture, out amount) &&
+                !decimal.TryParse(raw, NumberStyles.Number, CultureInfo.InvariantCulture, out amount))
+            { InventoryMessage = "Tiền bồi thường phải là số hợp lệ (VND)."; return; }
+            if (amount < 0 || amount > 100000000m || (IncidentNote ?? "").Trim().Length < 8)
+            { InventoryMessage = "Tiền từ 0 đến 100 triệu VND và lý do phải ít nhất 8 ký tự."; return; }
+            InventoryBusy = true;
+            long bookId = FormBookId;
+            try
+            {
+                var result = await _detailApi.ReportInventoryIncidentAsync(_token,
+                    SelectedStockCopy.OpenBorrowDetailId.Value, kind, amount, IncidentNote.Trim());
+                InventoryMessage = result.Error ?? result.Message;
+                if (string.IsNullOrWhiteSpace(result.Error))
+                {
+                    ConfirmIncident = false;
+                    await LoadStockCopiesCoreAsync(bookId);
+                }
+            }
+            catch (Exception) { InventoryMessage = "Không ghi được sự cố sách."; }
+            finally { InventoryBusy = false; }
+            await RefreshInventoryAsync();
+        }
+    }
+
+    // One checkbox item; no separate ViewModel or file for a reference selection.
+    public sealed class StockReferenceChoice : MvvmBase
+    {
+        private bool _selected;
+        public long Id { get; private set; }
+        public string Name { get; private set; }
+        public bool Selected { get => _selected; set => Set(ref _selected, value); }
+        public StockReferenceChoice(long id, string name, bool selected)
+        { Id = id; Name = name; _selected = selected; }
     }
 }

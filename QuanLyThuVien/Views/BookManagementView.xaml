@@ -1,28 +1,25 @@
-<UserControl x:Class="QuanLyThuVien.Views.BookManagementView"
-             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             x:Name="BookHome">
+<UserControl xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" x:Class="QuanLyThuVien.Views.BookManagementView" x:Name="BookHome">
     <UserControl.Resources>
-        <BooleanToVisibilityConverter x:Key="BoolVisibility" />
+        <BooleanToVisibilityConverter x:Key="BoolVisibility"/>
         <Style x:Key="SelectBar" TargetType="ComboBox">
-            <Setter Property="Height" Value="37" />
-            <Setter Property="Margin" Value="4,3" />
-            <Setter Property="Background" Value="White" />
-            <Setter Property="Foreground" Value="#332A4A" />
-            <Setter Property="BorderBrush" Value="#D9CBE8" />
-            <Setter Property="FontSize" Value="12" />
-            <Setter Property="MaxDropDownHeight" Value="300" />
-            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="Height" Value="37"/>
+            <Setter Property="Margin" Value="4,3"/>
+            <Setter Property="Background" Value="White"/>
+            <Setter Property="Foreground" Value="#332A4A"/>
+            <Setter Property="BorderBrush" Value="#D9CBE8"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="MaxDropDownHeight" Value="300"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
         </Style>
         <Style x:Key="PurpleButton" TargetType="Button">
-            <Setter Property="Background" Value="#69519C" />
-            <Setter Property="Foreground" Value="White" />
-            <Setter Property="BorderThickness" Value="0" />
-            <Setter Property="Cursor" Value="Hand" />
-            <Setter Property="Padding" Value="12,6" />
+            <Setter Property="Background" Value="#69519C"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Padding" Value="12,6"/>
             <Style.Triggers>
                 <Trigger Property="IsMouseOver" Value="True">
-                    <Setter Property="Background" Value="#876DB6" />
+                    <Setter Property="Background" Value="#876DB6"/>
                 </Trigger>
             </Style.Triggers>
         </Style>
@@ -33,42 +30,31 @@
         <Border Background="#44345F" Padding="15" CornerRadius="6,6,0,0">
             <Grid>
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
                 <StackPanel>
-                    <TextBlock Text="SMART LIBRARY" FontSize="22" FontWeight="Bold" Foreground="White" />
-                    <TextBlock Text="Tìm cuốn sách phù hợp với bạn" Foreground="#D9CDE9" FontSize="12" Margin="0,3,0,0" />
+                    <TextBlock Text="SMART LIBRARY" FontSize="22" FontWeight="Bold" Foreground="White"/>
+                    <TextBlock Text="Tìm cuốn sách phù hợp với bạn" Foreground="#D9CDE9" FontSize="12" Margin="0,3,0,0"/>
                 </StackPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
                     <Grid>
-                        <TextBox x:Name="HomeBookSearchInput"
-                                 Text="{Binding Query, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                 Width="280" Height="37" Padding="10,7"
-                                 ToolTip="Gõ tên sách, ISBN hoặc tác giả (không phân biệt dấu / chữ hoa)">
+                        <TextBox x:Name="HomeBookSearchInput" Text="{Binding Query, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="280" Height="37" Padding="10,7" ToolTip="Gõ tên sách, ISBN hoặc tác giả (không phân biệt dấu / chữ hoa)">
                             <TextBox.InputBindings>
-                                <KeyBinding Key="Return" Command="{Binding SearchCommand}" />
+                                <KeyBinding Key="Return" Command="{Binding SearchCommand}"/>
                             </TextBox.InputBindings>
                         </TextBox>
                         <!-- Overlay dropdown like a web search autocomplete, not another DataGrid. -->
-                        <Popup Placement="Bottom" PlacementTarget="{Binding ElementName=HomeBookSearchInput}"
-                               DataContext="{Binding DataContext, ElementName=HomeBookSearchInput}"
-                               VerticalOffset="2" StaysOpen="True" AllowsTransparency="True"
-                               PopupAnimation="Fade" IsOpen="{Binding ShowSearchSuggestions, Mode=OneWay}">
-                            <Border Width="350" MaxHeight="345" Background="White"
-                                    BorderBrush="#D6C8EB" BorderThickness="1" CornerRadius="5">
+                        <Popup Placement="Bottom" PlacementTarget="{Binding ElementName=HomeBookSearchInput}" DataContext="{Binding DataContext, ElementName=HomeBookSearchInput}" VerticalOffset="2" StaysOpen="True" AllowsTransparency="True" PopupAnimation="Fade" IsOpen="{Binding ShowSearchSuggestions, Mode=OneWay}">
+                            <Border Width="350" MaxHeight="345" Background="White" BorderBrush="#D6C8EB" BorderThickness="1" CornerRadius="5">
                                 <ScrollViewer MaxHeight="340" VerticalScrollBarVisibility="Auto">
                                     <StackPanel>
-                                        <ListBox ItemsSource="{Binding SearchSuggestions, Mode=OneWay}"
-                                                 SelectedItem="{Binding SelectedSearchSuggestion, Mode=TwoWay}"
-                                                 BorderThickness="0" Background="White">
+                                        <ListBox ItemsSource="{Binding SearchSuggestions, Mode=OneWay}" SelectedItem="{Binding SelectedSearchSuggestion, Mode=TwoWay}" BorderThickness="0" Background="White">
                                             <ListBox.ItemTemplate>
                                                 <DataTemplate>
                                                     <StackPanel Margin="8,6" Width="312">
-                                                        <TextBlock Text="{Binding Title}" FontWeight="SemiBold"
-                                                                   FontSize="13" Foreground="#33274C" TextWrapping="Wrap" />
-                                                        <TextBlock Text="{Binding Authors}" FontSize="11"
-                                                                   Foreground="#685876" TextTrimming="CharacterEllipsis" />
+                                                        <TextBlock Text="{Binding Title}" FontWeight="SemiBold" FontSize="13" Foreground="#33274C" TextWrapping="Wrap"/>
+                                                        <TextBlock Text="{Binding Authors}" FontSize="11" Foreground="#685876" TextTrimming="CharacterEllipsis"/>
                                                         <TextBlock FontSize="11" Foreground="#7B6A93">
                                                             <Run Text="Cuốn trong kho: "/>
                                                             <Run Text="{Binding PhysicalCopies, Mode=OneWay}"/>
@@ -77,104 +63,78 @@
                                                 </DataTemplate>
                                             </ListBox.ItemTemplate>
                                         </ListBox>
-                                        <TextBlock Text="Không tìm thấy đầu sách phù hợp."
-                                                   Visibility="{Binding NoSearchSuggestions, Converter={StaticResource BoolVisibility}}"
-                                                   Foreground="#8A617B" Padding="12,10" FontSize="12" />
+                                        <TextBlock Text="Không tìm thấy đầu sách phù hợp." Visibility="{Binding NoSearchSuggestions, Converter={StaticResource BoolVisibility}}" Foreground="#8A617B" Padding="12,10" FontSize="12"/>
                                     </StackPanel>
                                 </ScrollViewer>
                             </Border>
                         </Popup>
                     </Grid>
-                    <Button Style="{StaticResource PurpleButton}" Command="{Binding SearchCommand}"
-                            Content="TÌM SÁCH" Height="37" Margin="7,0,0,0" />
+                    <Button Style="{StaticResource PurpleButton}" Command="{Binding SearchCommand}" Content="TÌM SÁCH" Height="37" Margin="7,0,0,0"/>
                 </StackPanel>
             </Grid>
         </Border>
 
         <!-- Each facet starts at 'Tất cả'; other lists update automatically. -->
-        <Border Background="White" BorderBrush="#E5DDEE" BorderThickness="1,0,1,1"
-                Padding="6" CornerRadius="0,0,6,6">
+        <Border Background="White" BorderBrush="#E5DDEE" BorderThickness="1,0,1,1" Padding="6" CornerRadius="0,0,6,6">
             <WrapPanel>
-                <Button Style="{StaticResource PurpleButton}" Content="⌂  TẤT CẢ"
-                        Height="38" Width="107" Margin="4,15,8,4"
-                        Command="{Binding ResetFiltersCommand}" />
+                <Button Style="{StaticResource PurpleButton}" Content="⌂  TẤT CẢ" Height="38" Width="107" Margin="4,15,8,4" Command="{Binding ResetFiltersCommand}"/>
                 <StackPanel Margin="3,1">
-                    <TextBlock Text="THỂ LOẠI ▾" FontWeight="SemiBold" Foreground="#5F497F" FontSize="11" Margin="5,0,0,0" />
-                    <ComboBox Style="{StaticResource SelectBar}" Width="143"
-                              ItemsSource="{Binding CategoryOptions}"
-                              SelectedItem="{Binding SelectedCategory, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                              ToolTip="Lọc thể loại - Tất cả hoặc Không có" />
+                    <TextBlock Text="THỂ LOẠI ▾" FontWeight="SemiBold" Foreground="#5F497F" FontSize="11" Margin="5,0,0,0"/>
+                    <ComboBox Style="{StaticResource SelectBar}" Width="143" ItemsSource="{Binding CategoryOptions}" SelectedItem="{Binding SelectedCategory, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" ToolTip="Lọc thể loại - Tất cả hoặc Không có"/>
                 </StackPanel>
                 <StackPanel Margin="3,1">
-                    <TextBlock Text="TÁC GIẢ ▾" FontWeight="SemiBold" Foreground="#5F497F" FontSize="11" Margin="5,0,0,0" />
-                    <ComboBox Style="{StaticResource SelectBar}" Width="143"
-                              ItemsSource="{Binding AuthorOptions}"
-                              SelectedItem="{Binding SelectedAuthor, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                              ToolTip="Danh sách tác giả lọc theo thể loại / NXB / năm" />
+                    <TextBlock Text="TÁC GIẢ ▾" FontWeight="SemiBold" Foreground="#5F497F" FontSize="11" Margin="5,0,0,0"/>
+                    <ComboBox Style="{StaticResource SelectBar}" Width="143" ItemsSource="{Binding AuthorOptions}" SelectedItem="{Binding SelectedAuthor, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" ToolTip="Danh sách tác giả lọc theo thể loại / NXB / năm"/>
                 </StackPanel>
                 <StackPanel Margin="3,1">
-                    <TextBlock Text="NHÀ XUẤT BẢN ▾" FontWeight="SemiBold" Foreground="#5F497F" FontSize="11" Margin="5,0,0,0" />
-                    <ComboBox Style="{StaticResource SelectBar}" Width="143"
-                              ItemsSource="{Binding PublisherOptions}"
-                              SelectedItem="{Binding SelectedPublisher, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                              ToolTip="Danh sách NXB lọc theo các tiêu chí còn lại" />
+                    <TextBlock Text="NHÀ XUẤT BẢN ▾" FontWeight="SemiBold" Foreground="#5F497F" FontSize="11" Margin="5,0,0,0"/>
+                    <ComboBox Style="{StaticResource SelectBar}" Width="143" ItemsSource="{Binding PublisherOptions}" SelectedItem="{Binding SelectedPublisher, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" ToolTip="Danh sách NXB lọc theo các tiêu chí còn lại"/>
                 </StackPanel>
                 <StackPanel Margin="3,1">
-                    <TextBlock Text="NĂM XUẤT BẢN ▾" FontWeight="SemiBold" Foreground="#5F497F" FontSize="11" Margin="5,0,0,0" />
-                    <ComboBox Style="{StaticResource SelectBar}" Width="118"
-                              ItemsSource="{Binding YearOptions}"
-                              SelectedItem="{Binding SelectedYear, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                              ToolTip="Danh sách năm lọc theo các tiêu chí còn lại" />
+                    <TextBlock Text="NĂM XUẤT BẢN ▾" FontWeight="SemiBold" Foreground="#5F497F" FontSize="11" Margin="5,0,0,0"/>
+                    <ComboBox Style="{StaticResource SelectBar}" Width="118" ItemsSource="{Binding YearOptions}" SelectedItem="{Binding SelectedYear, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" ToolTip="Danh sách năm lọc theo các tiêu chí còn lại"/>
                 </StackPanel>
             </WrapPanel>
         </Border>
 
         <Border Background="#EFEAFB" CornerRadius="6" Padding="19" Margin="0,17,0,14">
             <StackPanel>
-                <TextBlock Text="KHÁM PHÁ TỦ SÁCH" FontSize="25" FontWeight="Bold" Foreground="#3D3056" />
-                <TextBlock Text="Đầu sách có thật trong thư viện • Chọn thể loại, tác giả, nhà xuất bản hoặc tìm theo từ khóa"
-                           TextWrapping="Wrap" Margin="0,5,0,0" Foreground="#695B82" />
+                <TextBlock Text="KHÁM PHÁ TỦ SÁCH" FontSize="25" FontWeight="Bold" Foreground="#3D3056"/>
+                <TextBlock Text="Đầu sách có thật trong thư viện • Chọn thể loại, tác giả, nhà xuất bản hoặc tìm theo từ khóa" TextWrapping="Wrap" Margin="0,5,0,0" Foreground="#695B82"/>
             </StackPanel>
         </Border>
 
-        <TextBlock Text="{Binding Message}" Foreground="#645181" FontSize="13" Margin="5,0,0,12" TextWrapping="Wrap" />
-        <TextBlock Text="Không có sách phù hợp với tiêu chí đã chọn."
-                   Visibility="{Binding HasNoBooks, Converter={StaticResource BoolVisibility}}"
-                   Margin="12,6,0,16" FontSize="16" FontWeight="SemiBold" Foreground="#9A4361" />
+        <TextBlock Text="{Binding Message}" Foreground="#645181" FontSize="13" Margin="5,0,0,12" TextWrapping="Wrap"/>
+        <TextBlock Text="Không có sách phù hợp với tiêu chí đã chọn." Visibility="{Binding HasNoBooks, Converter={StaticResource BoolVisibility}}" Margin="12,6,0,16" FontSize="16" FontWeight="SemiBold" Foreground="#9A4361"/>
+
+
+
 
         <ItemsControl ItemsSource="{Binding Books}" HorizontalAlignment="Stretch">
             <ItemsControl.ItemsPanel>
                 <ItemsPanelTemplate>
-                    <WrapPanel Orientation="Horizontal" />
+                    <WrapPanel Orientation="Horizontal"/>
                 </ItemsPanelTemplate>
             </ItemsControl.ItemsPanel>
             <ItemsControl.ItemTemplate>
                 <DataTemplate>
-                    <Border Width="194" Margin="0,0,12,15" Background="White"
-                            BorderBrush="#E5E1EF" BorderThickness="1" CornerRadius="5">
+                    <Border Width="194" Margin="0,0,12,15" Background="White" BorderBrush="#E5E1EF" BorderThickness="1" CornerRadius="5">
                         <StackPanel>
                             <!-- Real covers are not yet in the current API. Do not fabricate cover images. -->
                             <Grid Height="145" Background="#E2DCF2">
-                                <TextBlock Text="📚" FontSize="52" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                <TextBlock Text="📚" FontSize="52" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                                 <Border Background="#5F487E" VerticalAlignment="Bottom" Padding="7,5">
-                                    <TextBlock Text="{Binding Categories}" Foreground="White" FontSize="10"
-                                               TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Text="{Binding Categories}" Foreground="White" FontSize="10" TextTrimming="CharacterEllipsis"/>
                                 </Border>
                             </Grid>
                             <StackPanel Margin="11,11,11,9">
-                                <TextBlock Text="{Binding Title}" Foreground="#2C2941" FontWeight="SemiBold"
-                                           FontSize="14" TextWrapping="Wrap" TextTrimming="CharacterEllipsis"
-                                           MaxHeight="40" MinHeight="39" />
-                                <TextBlock Text="{Binding Authors}" Foreground="#736582" FontSize="12"
-                                           TextTrimming="CharacterEllipsis" Margin="0,5,0,0" />
+                                <TextBlock Text="{Binding Title}" Foreground="#2C2941" FontWeight="SemiBold" FontSize="14" TextWrapping="Wrap" TextTrimming="CharacterEllipsis" MaxHeight="40" MinHeight="39"/>
+                                <TextBlock Text="{Binding Authors}" Foreground="#736582" FontSize="12" TextTrimming="CharacterEllipsis" Margin="0,5,0,0"/>
                                 <StackPanel Orientation="Horizontal" Margin="0,7,0,0">
-                                    <TextBlock Text="Số cuốn: " FontSize="11" Foreground="#7B6C8F" />
-                                    <TextBlock Text="{Binding PhysicalCopies}" FontWeight="Bold" FontSize="11" Foreground="#69519C" />
+                                    <TextBlock Text="Số cuốn: " FontSize="11" Foreground="#7B6C8F"/>
+                                    <TextBlock Text="{Binding PhysicalCopies}" FontWeight="Bold" FontSize="11" Foreground="#69519C"/>
                                 </StackPanel>
-                                <Button Content="XEM CHI TIẾT" Style="{StaticResource PurpleButton}"
-                                        Height="32" Margin="0,12,0,0"
-                                        Command="{Binding DataContext.OpenBookCommand, RelativeSource={RelativeSource AncestorType={x:Type UserControl}}}"
-                                        CommandParameter="{Binding}" />
+                                <Button Content="XEM CHI TIẾT" Style="{StaticResource PurpleButton}" Height="32" Margin="0,12,0,0" Command="{Binding DataContext.OpenBookCommand, RelativeSource={RelativeSource AncestorType={x:Type UserControl}}}" CommandParameter="{Binding}"/>
                             </StackPanel>
                         </StackPanel>
                     </Border>
@@ -182,250 +142,75 @@
             </ItemsControl.ItemTemplate>
         </ItemsControl>
 
-        <!-- SAME PAGE; management subsection only appears for authorised staff. -->
-        <Expander Header="QUẢN TRỊ TÁC GIẢ / NHÀ XUẤT BẢN / THỂ LOẠI (STAFF / ADMIN)"
-                  Visibility="{Binding CanManage, Converter={StaticResource BoolVisibility}}"
-                  Margin="0,0,0,15" Background="White" Padding="10" FontWeight="SemiBold">
-            <StackPanel Margin="8,12,8,12">
-                <Button Content="TẢI LẠI DANH MỤC" Command="{Binding LoadReferencesCommand}"
-                        Height="34" Width="170" HorizontalAlignment="Left" Margin="0,0,0,10" />
-                <TabControl MinHeight="405">
-                    <TabItem Header="Tác giả">
-                        <StackPanel Margin="10">
-                            <DataGrid ItemsSource="{Binding Authors}" AutoGenerateColumns="False" IsReadOnly="True"
-                                      Height="240" CanUserAddRows="False" CanUserDeleteRows="False"
-                                      ScrollViewer.HorizontalScrollBarVisibility="Auto">
-                                <DataGrid.Columns>
-                                    <DataGridTextColumn Header="ID" Binding="{Binding Id}" Width="65" />
-                                    <DataGridTextColumn Header="Tên tác giả" Binding="{Binding Name}" Width="2*" MinWidth="190" />
-                                    <DataGridTextColumn Header="Tiểu sử" Binding="{Binding Detail}" Width="3*" MinWidth="190" />
-                                </DataGrid.Columns>
-                            </DataGrid>
-                            <TextBlock Text="Tên tác giả:" Margin="0,10,0,3" />
-                            <TextBox Text="{Binding AuthorName, UpdateSourceTrigger=PropertyChanged}" Height="33" />
-                            <TextBlock Text="Tiểu sử:" Margin="0,6,0,3" />
-                            <TextBox Text="{Binding AuthorDetail, UpdateSourceTrigger=PropertyChanged}" Height="33" />
-                            <Button Style="{StaticResource PurpleButton}" Content="THÊM TÁC GIẢ"
-                                    Command="{Binding AddAuthorCommand}" Height="35" Width="165"
-                                    HorizontalAlignment="Left" Margin="0,9,0,0" />
-                        </StackPanel>
-                    </TabItem>
-                    <TabItem Header="Nhà xuất bản">
-                        <StackPanel Margin="10">
-                            <DataGrid ItemsSource="{Binding Publishers}" AutoGenerateColumns="False" IsReadOnly="True"
-                                      Height="240" CanUserAddRows="False" CanUserDeleteRows="False"
-                                      ScrollViewer.HorizontalScrollBarVisibility="Auto">
-                                <DataGrid.Columns>
-                                    <DataGridTextColumn Header="ID" Binding="{Binding Id}" Width="65" />
-                                    <DataGridTextColumn Header="Tên NXB" Binding="{Binding Name}" Width="2*" MinWidth="190" />
-                                    <DataGridTextColumn Header="Liên hệ" Binding="{Binding Detail}" Width="3*" MinWidth="190" />
-                                </DataGrid.Columns>
-                            </DataGrid>
-                            <TextBlock Text="Tên nhà xuất bản:" Margin="0,10,0,3" />
-                            <TextBox Text="{Binding PublisherName, UpdateSourceTrigger=PropertyChanged}" Height="33" />
-                            <TextBlock Text="Thông tin liên hệ:" Margin="0,6,0,3" />
-                            <TextBox Text="{Binding PublisherDetail, UpdateSourceTrigger=PropertyChanged}" Height="33" />
-                            <Button Style="{StaticResource PurpleButton}" Content="THÊM NHÀ XUẤT BẢN"
-                                    Command="{Binding AddPublisherCommand}" Height="35" Width="195"
-                                    HorizontalAlignment="Left" Margin="0,9,0,0" />
-                        </StackPanel>
-                    </TabItem>
-                    <TabItem Header="Thể loại">
-                        <StackPanel Margin="10">
-                            <DataGrid ItemsSource="{Binding Categories}" AutoGenerateColumns="False" IsReadOnly="True"
-                                      Height="240" CanUserAddRows="False" CanUserDeleteRows="False"
-                                      ScrollViewer.HorizontalScrollBarVisibility="Auto">
-                                <DataGrid.Columns>
-                                    <DataGridTextColumn Header="ID" Binding="{Binding Id}" Width="65" />
-                                    <DataGridTextColumn Header="Tên thể loại" Binding="{Binding Name}" Width="*" MinWidth="190" />
-                                </DataGrid.Columns>
-                            </DataGrid>
-                            <TextBlock Text="Tên thể loại mới:" Margin="0,12,0,3" />
-                            <TextBox Text="{Binding CategoryName, UpdateSourceTrigger=PropertyChanged}" Height="33" />
-                            <Button Style="{StaticResource PurpleButton}" Content="THÊM THỂ LOẠI"
-                                    Command="{Binding AddCategoryCommand}" Height="35" Width="170"
-                                    HorizontalAlignment="Left" Margin="0,9,0,0" />
-                        </StackPanel>
-                    </TabItem>
-                </TabControl>
-            </StackPanel>
-        </Expander>
+
+
         <!-- Centred popup: no extra Window, no code-behind. The PlacementTarget is
              the existing MainWindow, not the tall scrolling list of book cards. -->
-        <Popup x:Name="BookDetailPopup" Placement="Center" StaysOpen="False"
-               AllowsTransparency="True" PopupAnimation="Fade"
-               PlacementTarget="{Binding RelativeSource={RelativeSource AncestorType={x:Type Window}}}"
-               DataContext="{Binding ElementName=BookHome, Path=DataContext}"
-               IsOpen="{Binding DetailExpanded, Mode=TwoWay}">
-            <Border Width="810" Height="505" Background="White" BorderBrush="#A897C9"
-                    BorderThickness="2" CornerRadius="9" SnapsToDevicePixels="True">
+        <Popup x:Name="BookDetailPopup" Placement="Center" StaysOpen="False" AllowsTransparency="True" PopupAnimation="Fade" PlacementTarget="{Binding RelativeSource={RelativeSource AncestorType={x:Type Window}}}" DataContext="{Binding ElementName=BookHome, Path=DataContext}" IsOpen="{Binding DetailExpanded, Mode=TwoWay}">
+            <Border Width="810" Height="505" Background="White" BorderBrush="#A897C9" BorderThickness="2" CornerRadius="9" SnapsToDevicePixels="True">
                 <Border.Effect>
-                    <DropShadowEffect Color="#261D42" BlurRadius="23" ShadowDepth="7" Opacity="0.46" />
+                    <DropShadowEffect Color="#261D42" BlurRadius="23" ShadowDepth="7" Opacity="0.46"/>
                 </Border.Effect>
                 <Grid>
                     <Grid.RowDefinitions>
-                        <RowDefinition Height="56" />
-                        <RowDefinition Height="*" />
-                        <RowDefinition Height="52" />
+                        <RowDefinition Height="56"/>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="52"/>
                     </Grid.RowDefinitions>
                     <Border Background="#44345F" CornerRadius="7,7,0,0" Padding="16,10">
                         <DockPanel>
-                            <Button DockPanel.Dock="Right" Content="✕  ĐÓNG"
-                                    Background="#F3E9FF" Foreground="#38224A"
-                                    Padding="13,5" BorderThickness="0"
-                                    Command="{Binding CloseDetailCommand}" />
-                            <TextBlock Text="THÔNG TIN CHI TIẾT SÁCH" FontSize="18"
-                                       VerticalAlignment="Center" FontWeight="Bold" Foreground="White" />
+                            <Button DockPanel.Dock="Right" Content="✕  ĐÓNG" Background="#F3E9FF" Foreground="#38224A" Padding="13,5" BorderThickness="0" Command="{Binding CloseDetailCommand}"/>
+                            <TextBlock Text="THÔNG TIN CHI TIẾT SÁCH" FontSize="18" VerticalAlignment="Center" FontWeight="Bold" Foreground="White"/>
                         </DockPanel>
                     </Border>
-                    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto"
-                                  HorizontalScrollBarVisibility="Disabled">
+                    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                         <StackPanel Margin="20,18,20,20">
-                            <TextBlock Text="{Binding DetailMessage}" TextWrapping="Wrap"
-                                       Foreground="#9B3563" Margin="0,0,0,10" />
+                            <TextBlock Text="{Binding DetailMessage}" TextWrapping="Wrap" Foreground="#9B3563" Margin="0,0,0,10"/>
                             <Grid>
                                 <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="215" />
-                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="215"/>
+                                    <ColumnDefinition Width="*"/>
                                 </Grid.ColumnDefinitions>
                                 <!-- A real public image is shown only when the API returns coverUrl.
                                      Missing cover leaves the explicitly labelled placeholder. -->
-                                <Border Grid.Column="0" Width="193" Height="255"
-                                        VerticalAlignment="Top" HorizontalAlignment="Left"
-                                        CornerRadius="5" Background="#E8E4F2" BorderBrush="#D7D0E5" BorderThickness="1">
+                                <Border Grid.Column="0" Width="193" Height="255" VerticalAlignment="Top" HorizontalAlignment="Left" CornerRadius="5" Background="#E8E4F2" BorderBrush="#D7D0E5" BorderThickness="1">
                                     <Grid>
                                         <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
-                                            <TextBlock Text="📖" FontSize="40" HorizontalAlignment="Center" />
-                                            <TextBlock Text="Chưa có ảnh bìa" FontSize="12"
-                                                       Foreground="#6E6081" HorizontalAlignment="Center" />
+                                            <TextBlock Text="📖" FontSize="40" HorizontalAlignment="Center"/>
+                                            <TextBlock Text="Chưa có ảnh bìa" FontSize="12" Foreground="#6E6081" HorizontalAlignment="Center"/>
                                         </StackPanel>
-                                        <Image Source="{Binding Detail.CoverUrl}" Stretch="Uniform" />
+                                        <Image Source="{Binding Detail.CoverUrl}" Stretch="Uniform"/>
                                     </Grid>
                                 </Border>
                                 <StackPanel Grid.Column="1" Margin="6,0,0,0">
-                                    <TextBlock Text="{Binding SelectedBook.Title}" TextWrapping="Wrap"
-                                               Foreground="#332746" FontWeight="Bold" FontSize="21" />
-                                    <TextBlock Text="Tác giả" FontWeight="SemiBold" Foreground="#77688B" Margin="0,11,0,0" />
-                                    <TextBlock Text="{Binding DetailAuthors}" TextWrapping="Wrap" FontSize="14" />
-                                    <TextBlock Text="Thể loại" FontWeight="SemiBold" Foreground="#77688B" Margin="0,9,0,0" />
-                                    <TextBlock Text="{Binding DetailCategories}" TextWrapping="Wrap" FontSize="14" />
-                                    <TextBlock Margin="0,9,0,0"><Run Text="Nhà xuất bản: "/><Run Text="{Binding DetailPublisher, Mode=OneWay}" /></TextBlock>
-                                    <TextBlock Margin="0,5,0,0"><Run Text="Năm xuất bản: "/><Run Text="{Binding DetailPublicationYear, Mode=OneWay}" /></TextBlock>
-                                    <TextBlock Margin="0,5,0,0"><Run Text="ISBN: "/><Run Text="{Binding DetailIsbn, Mode=OneWay}" /></TextBlock>
+                                    <TextBlock Text="{Binding SelectedBook.Title}" TextWrapping="Wrap" Foreground="#332746" FontWeight="Bold" FontSize="21"/>
+                                    <TextBlock Text="Tác giả" FontWeight="SemiBold" Foreground="#77688B" Margin="0,11,0,0"/>
+                                    <TextBlock Text="{Binding DetailAuthors}" TextWrapping="Wrap" FontSize="14"/>
+                                    <TextBlock Text="Thể loại" FontWeight="SemiBold" Foreground="#77688B" Margin="0,9,0,0"/>
+                                    <TextBlock Text="{Binding DetailCategories}" TextWrapping="Wrap" FontSize="14"/>
+                                    <TextBlock Margin="0,9,0,0"><Run Text="Nhà xuất bản: "/><Run Text="{Binding DetailPublisher, Mode=OneWay}"/></TextBlock>
+                                    <TextBlock Margin="0,5,0,0"><Run Text="Năm xuất bản: "/><Run Text="{Binding DetailPublicationYear, Mode=OneWay}"/></TextBlock>
+                                    <TextBlock Margin="0,5,0,0"><Run Text="ISBN: "/><Run Text="{Binding DetailIsbn, Mode=OneWay}"/></TextBlock>
                                     <Border Background="#F1EDFA" Padding="12" CornerRadius="5" Margin="0,13,0,0">
                                         <StackPanel>
-                                            <TextBlock Text="TÌNH TRẠNG KHO" FontWeight="Bold" Foreground="#44345F" />
-                                            <TextBlock FontSize="14" Margin="0,8,0,0"><Run Text="Tổng số cuốn vật lý: "/><Run Text="{Binding Detail.TotalCopies, Mode=OneWay}" /></TextBlock>
-                                            <TextBlock FontSize="14" FontWeight="Bold" Foreground="#27654F" Margin="0,5,0,0"><Run Text="Còn có thể mượn: "/><Run Text="{Binding Detail.AvailableCopies, Mode=OneWay}" /></TextBlock>
-                                            <TextBlock FontSize="14" Margin="0,5,0,0"><Run Text="Đang được mượn: "/><Run Text="{Binding Detail.OnLoanCopies, Mode=OneWay}" /></TextBlock>
-                                            <TextBlock FontSize="13" Margin="0,5,0,0"><Run Text="Cuốn tình trạng active: "/><Run Text="{Binding Detail.ActiveCopies, Mode=OneWay}" /></TextBlock>
+                                            <TextBlock Text="TÌNH TRẠNG KHO" FontWeight="Bold" Foreground="#44345F"/>
+                                            <TextBlock FontSize="14" Margin="0,8,0,0"><Run Text="Tổng số cuốn vật lý: "/><Run Text="{Binding Detail.TotalCopies, Mode=OneWay}"/></TextBlock>
+                                            <TextBlock FontSize="14" FontWeight="Bold" Foreground="#27654F" Margin="0,5,0,0"><Run Text="Còn có thể mượn: "/><Run Text="{Binding Detail.AvailableCopies, Mode=OneWay}"/></TextBlock>
+                                            <TextBlock FontSize="14" Margin="0,5,0,0"><Run Text="Đang được mượn: "/><Run Text="{Binding Detail.OnLoanCopies, Mode=OneWay}"/></TextBlock>
+                                            <TextBlock FontSize="13" Margin="0,5,0,0"><Run Text="Cuốn tình trạng active: "/><Run Text="{Binding Detail.ActiveCopies, Mode=OneWay}"/></TextBlock>
                                         </StackPanel>
                                     </Border>
                                 </StackPanel>
                             </Grid>
-                            <TextBlock Text="MÔ TẢ SÁCH" Foreground="#44345F" FontWeight="Bold"
-                                       FontSize="15" Margin="0,22,0,7" />
-                            <TextBlock Text="{Binding DetailDescription}" TextWrapping="Wrap"
-                                       FontSize="13" LineHeight="20" Foreground="#4F4564" />
-                            <!-- STEP 70: Ratings belong to the existing book detail popup, not a new page. -->
-                            <Expander Margin="0,18,0,0" IsExpanded="False" Background="#F7F5FB">
-                                <Expander.Header>
-                                    <StackPanel Orientation="Horizontal">
-                                        <TextBlock Text="ĐÁNH GIÁ SÁCH" FontSize="14" FontWeight="Bold"
-                                                   Foreground="#44345F" Margin="0,0,12,0" />
-                                        <TextBlock Text="{Binding RatingSummary}" Foreground="#715E89" FontSize="13" />
-                                    </StackPanel>
-                                </Expander.Header>
-                                <StackPanel Margin="14,12,14,14">
-                                    <TextBlock Text="{Binding RatingMessage}" Foreground="#855073"
-                                               TextWrapping="Wrap" Margin="0,0,0,9" />
-                                    <StackPanel Visibility="{Binding CanRateBook, Converter={StaticResource BoolVisibility}}">
-                                        <TextBlock Text="ĐÁNH GIÁ CỦA BẠN" Foreground="#44345F" FontWeight="SemiBold" />
-                                        <StackPanel Orientation="Horizontal" Margin="0,7,0,8">
-                                            <TextBlock Text="Số sao (1–5)" VerticalAlignment="Center" Margin="0,0,10,0" />
-                                            <ComboBox Width="90" Height="30" ItemsSource="{Binding RatingScoreOptions}"
-                                                      SelectedItem="{Binding SelectedRatingScore, Mode=TwoWay}" />
-                                        </StackPanel>
-                                        <TextBox Text="{Binding RatingComment, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                                 MinHeight="64" MaxHeight="110" AcceptsReturn="True" MaxLength="1000"
-                                                 VerticalScrollBarVisibility="Auto" TextWrapping="Wrap"
-                                                 Padding="9,7" ToolTip="Nhận xét tối đa 1000 ký tự (không bắt buộc)" />
-                                        <Button Content="LƯU / CẬP NHẬT ĐÁNH GIÁ" Command="{Binding SaveRatingCommand}"
-                                                Background="#69519C" Foreground="White" BorderThickness="0"
-                                                HorizontalAlignment="Left" Padding="15,7" Margin="0,9,0,12" />
-                                    </StackPanel>
-                                    <TextBlock Text="NHẬN XÉT GẦN ĐÂY (ẨN DANH)" FontWeight="SemiBold" Foreground="#44345F"
-                                               Margin="0,4,0,8" />
-                                    <ItemsControl ItemsSource="{Binding RatingComments}">
-                                        <ItemsControl.ItemTemplate>
-                                            <DataTemplate>
-                                                <Border BorderBrush="#E5DFEE" BorderThickness="0,0,0,1" Padding="0,6">
-                                                    <StackPanel>
-                                                        <TextBlock Text="{Binding ScoreLabel}" FontWeight="SemiBold"
-                                                                   Foreground="#645184" FontSize="12" />
-                                                        <TextBlock Text="{Binding Comment}" TextWrapping="Wrap"
-                                                                   Foreground="#4F4564" FontSize="13" Margin="0,4,0,0" />
-                                                    </StackPanel>
-                                                </Border>
-                                            </DataTemplate>
-                                        </ItemsControl.ItemTemplate>
-                                    </ItemsControl>
-                                </StackPanel>
-                            </Expander>
-                            <!-- Staff/Admin management stays within the SAME dialog. -->
-                            <StackPanel Visibility="{Binding CanManage, Converter={StaticResource BoolVisibility}}"
-                                        Margin="0,20,0,0">
-                                <TextBlock Text="QUẢN LÝ BẢN SAO — STAFF / ADMIN" FontWeight="Bold" Foreground="#44345F" />
-                                <StackPanel Orientation="Horizontal" Margin="0,8,0,8">
-                                    <TextBox Width="155" Height="31" Text="{Binding CopyCode, UpdateSourceTrigger=PropertyChanged}"
-                                             ToolTip="Mã cuốn vật lý" />
-                                    <TextBox Width="140" Height="31" Margin="8,0" Text="{Binding Shelf, UpdateSourceTrigger=PropertyChanged}"
-                                             ToolTip="Vị trí kệ" />
-                                    <Button Content="THÊM CUỐN" Height="31" Width="120" Command="{Binding AddCopyCommand}" />
-                                </StackPanel>
-                                <DataGrid ItemsSource="{Binding Copies}" SelectedItem="{Binding SelectedCopy, Mode=TwoWay}" IsReadOnly="True"
-                                          AutoGenerateColumns="False" Height="160" CanUserAddRows="False"
-                                          ScrollViewer.HorizontalScrollBarVisibility="Auto">
-                                    <DataGrid.Columns>
-                                        <DataGridTextColumn Header="Mã cuốn" Binding="{Binding CopyCode}" Width="2*" MinWidth="150" />
-                                        <DataGridTextColumn Header="Tình trạng" Binding="{Binding ConditionStatus}" Width="*" MinWidth="120" />
-                                        <DataGridTextColumn Header="Vị trí kệ" Binding="{Binding ShelfLocation}" Width="*" MinWidth="120" />
-                                    </DataGrid.Columns>
-                                </DataGrid>
-                                <!-- STEP 69: Choose a real copy, then assign the precise shelf/level/slot. -->
-                                <TextBlock Text="GÁN VỊ TRÍ CUỐN ĐÃ CÓ" FontWeight="Bold" Foreground="#44345F"
-                                           Margin="0,12,0,5" />
-                                <TextBlock Text="Chọn một mã cuốn ở bảng trên. Không tạo cuốn mới."
-                                           Foreground="#756884" FontSize="12" />
-                                <StackPanel Orientation="Horizontal" Margin="0,8,0,5">
-                                    <TextBlock Text="Kệ" VerticalAlignment="Center" Margin="0,0,5,0"/>
-                                    <ComboBox Width="75" ItemsSource="{Binding ShelfOptions}" SelectedItem="{Binding LocationShelf, Mode=TwoWay}"/>
-                                    <TextBlock Text="Tầng" VerticalAlignment="Center" Margin="12,0,5,0"/>
-                                    <ComboBox Width="65" ItemsSource="{Binding TierOptions}" SelectedItem="{Binding LocationTier, Mode=TwoWay}"/>
-                                    <TextBlock Text="Ô" VerticalAlignment="Center" Margin="12,0,5,0"/>
-                                    <ComboBox Width="75" ItemsSource="{Binding SlotOptions}" SelectedItem="{Binding LocationSlot, Mode=TwoWay}"/>
-                                    <Button Content="LƯU VỊ TRÍ" Command="{Binding SaveCopyLocationCommand}" Width="125"
-                                            Margin="10,0,0,0" Background="#2563EB" Foreground="White" BorderThickness="0"/>
-                                </StackPanel>
-                                <TextBlock Text="{Binding LocationMessage}" TextWrapping="Wrap"
-                                           Foreground="#56506A" FontSize="12" Margin="0,6,0,3"/>
-                            </StackPanel>
+                            <TextBlock Text="MÔ TẢ SÁCH" Foreground="#44345F" FontWeight="Bold" FontSize="15" Margin="0,22,0,7"/>
+                            <TextBlock Text="{Binding DetailDescription}" TextWrapping="Wrap" FontSize="13" LineHeight="20" Foreground="#4F4564"/>
+
                         </StackPanel>
                     </ScrollViewer>
                     <DockPanel Grid.Row="2" Background="#F6F3FA" LastChildFill="False">
-                        <Button Content="⌖  CHỈ ĐƯỜNG ĐẾN KỆ" Command="{Binding RouteToBookCommand}"
-                                Height="34" MinWidth="195" Padding="12,5" Margin="8,8,3,8"
-                                Background="#2563EB" Foreground="White" BorderThickness="0"
-                                DockPanel.Dock="Left" />
-                        <Button Content="ĐÓNG CHI TIẾT" Command="{Binding CloseDetailCommand}"
-                                Height="34" Width="160" Margin="0,8,16,8" DockPanel.Dock="Right" />
+                        <Button Content="ĐÓNG CHI TIẾT" Command="{Binding CloseDetailCommand}" Height="34" Width="160" Margin="0,8,16,8" DockPanel.Dock="Right"/>
                         <!-- Reader sends a REQUEST, not a direct checkout. -->
-                        <Button Content="＋  MƯỢN SÁCH / THÊM VÀO ĐƠN"
-                                Command="{Binding BorrowBookCommand}"
-                                Visibility="{Binding IsReader, Converter={StaticResource BoolVisibility}}"
-                                Background="#2C7E68" Foreground="White" BorderThickness="0"
-                                Height="34" MinWidth="240" Padding="12,5"
-                                Margin="16,8,6,8" DockPanel.Dock="Right" />
+                        <Button Content="＋  MƯỢN SÁCH / THÊM VÀO ĐƠN" Command="{Binding BorrowBookCommand}" Visibility="{Binding IsReader, Converter={StaticResource BoolVisibility}}" Background="#2C7E68" Foreground="White" BorderThickness="0" Height="34" MinWidth="240" Padding="12,5" Margin="16,8,6,8" DockPanel.Dock="Right"/>
                     </DockPanel>
                 </Grid>
             </Border>

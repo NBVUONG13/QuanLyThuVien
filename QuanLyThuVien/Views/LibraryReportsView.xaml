@@ -1,0 +1,160 @@
+﻿<UserControl x:Class="QuanLyThuVien.Views.LibraryReportsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d" d:DesignWidth="1000" d:DesignHeight="720">
+    <UserControl.Resources>
+        <Style x:Key="ReportCard" TargetType="Border">
+            <Setter Property="Background" Value="White"/>
+            <Setter Property="BorderBrush" Value="#E8E3F1"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="10"/>
+            <Setter Property="Padding" Value="15"/>
+            <Setter Property="Margin" Value="0,0,12,12"/>
+        </Style>
+        <Style x:Key="ReportCaption" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="#756887"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="TextWrapping" Value="Wrap"/>
+        </Style>
+        <Style x:Key="ReportNumber" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="#50377B"/>
+            <Setter Property="FontSize" Value="24"/>
+            <Setter Property="FontWeight" Value="Bold"/>
+            <Setter Property="Margin" Value="0,8,0,0"/>
+        </Style>
+        <Style x:Key="ReportHeader" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="18"/>
+            <Setter Property="FontWeight" Value="Bold"/>
+            <Setter Property="Foreground" Value="#3F305A"/>
+            <Setter Property="Margin" Value="0,14,0,10"/>
+        </Style>
+        <Style x:Key="ReportGrid" TargetType="DataGrid">
+            <Setter Property="IsReadOnly" Value="True"/>
+            <Setter Property="AutoGenerateColumns" Value="False"/>
+            <Setter Property="CanUserAddRows" Value="False"/>
+            <Setter Property="HeadersVisibility" Value="Column"/>
+            <Setter Property="Background" Value="White"/>
+            <Setter Property="BorderBrush" Value="#E4DDED"/>
+            <Setter Property="RowHeight" Value="30"/>
+            <Setter Property="ColumnHeaderHeight" Value="34"/>
+            <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Auto"/>
+        </Style>
+    </UserControl.Resources>
+    <Grid Background="#F6F7FC">
+        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <StackPanel Margin="25,22,18,22">
+                <TextBlock FontSize="27" FontWeight="Bold" Foreground="#352549" Text="BÁO CÁO QUẢN TRỊ THƯ VIỆN"/>
+                <TextBlock Text="Tổng hợp dữ liệu thật từ các phiếu mượn, bản sao và khoản phạt." Foreground="#827391" Margin="0,6,0,18"/>
+                <Border Background="White" CornerRadius="10" BorderBrush="#E8E3F1" BorderThickness="1" Padding="15">
+                    <StackPanel>
+                        <WrapPanel VerticalAlignment="Center">
+                            <TextBlock Text="Từ ngày" Margin="0,9,7,0" Foreground="#493A5B"/>
+                            <DatePicker SelectedDate="{Binding FromDate, Mode=TwoWay}" Width="145" Margin="0,0,18,0"/>
+                            <TextBlock Text="Đến ngày" Margin="0,9,7,0" Foreground="#493A5B"/>
+                            <DatePicker SelectedDate="{Binding ToDate, Mode=TwoWay}" Width="145" Margin="0,0,20,0"/>
+                            <Button Content="XEM BÁO CÁO" Command="{Binding ReloadCommand}" Background="#5F4B92" Foreground="White" FontWeight="SemiBold" BorderThickness="0" Padding="19,10" Cursor="Hand"/>
+                        </WrapPanel>
+                        <TextBlock Text="{Binding Message}" Foreground="#654C82" FontSize="13" TextWrapping="Wrap" Margin="0,12,0,0"/>
+                    </StackPanel>
+                </Border>
+                <TextBlock Style="{StaticResource ReportHeader}" Text="TỔNG QUAN"/>
+                <UniformGrid Columns="3">
+                    <Border Style="{StaticResource ReportCard}">
+                        <StackPanel>
+                            <TextBlock Style="{StaticResource ReportCaption}" Text="Phiếu mượn trong kỳ"/>
+                            <TextBlock Style="{StaticResource ReportNumber}" Text="{Binding Summary.BorrowOrders, StringFormat=N0}"/>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource ReportCard}">
+                        <StackPanel>
+                            <TextBlock Style="{StaticResource ReportCaption}" Text="Lượt cuốn được mượn trong kỳ"/>
+                            <TextBlock Style="{StaticResource ReportNumber}" Text="{Binding Summary.BorrowedCopies, StringFormat=N0}"/>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource ReportCard}">
+                        <StackPanel>
+                            <TextBlock Style="{StaticResource ReportCaption}" Text="Lượt cuốn trả trong kỳ"/>
+                            <TextBlock Style="{StaticResource ReportNumber}" Text="{Binding Summary.ReturnedCopies, StringFormat=N0}"/>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource ReportCard}" Background="#FFF0F0">
+                        <StackPanel>
+                            <TextBlock Style="{StaticResource ReportCaption}" Text="Cuốn hiện quá hạn (toàn hệ thống)"/>
+                            <TextBlock Style="{StaticResource ReportNumber}" Text="{Binding Summary.OverdueNow, StringFormat=N0}" Foreground="#B24555"/>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource ReportCard}">
+                        <StackPanel>
+                            <TextBlock Style="{StaticResource ReportCaption}" Text="Đầu sách đang hiển thị"/>
+                            <TextBlock Style="{StaticResource ReportNumber}" Text="{Binding Summary.VisibleBooks, StringFormat=N0}"/>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource ReportCard}">
+                        <StackPanel>
+                            <TextBlock Style="{StaticResource ReportCaption}" Text="Cuốn hiện sẵn sàng cho mượn"/>
+                            <TextBlock Style="{StaticResource ReportNumber}" Text="{Binding Summary.AvailableCopies, StringFormat=N0}"/>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource ReportCard}">
+                        <StackPanel>
+                            <TextBlock Style="{StaticResource ReportCaption}" Text="Phạt ghi nhận trong kỳ (VNĐ)"/>
+                            <TextBlock Style="{StaticResource ReportNumber}" Text="{Binding Summary.AssessedFines, StringFormat=N0}"/>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource ReportCard}" Background="#EBF7F1">
+                        <StackPanel>
+                            <TextBlock Style="{StaticResource ReportCaption}" Text="Tiền phạt thu trong kỳ (VNĐ)"/>
+                            <TextBlock Style="{StaticResource ReportNumber}" Text="{Binding Summary.CollectedFines, StringFormat=N0}" Foreground="#287B60"/>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource ReportCard}" Background="#FFF3E7">
+                        <StackPanel>
+                            <TextBlock Style="{StaticResource ReportCaption}" Text="Phạt hiện chưa thu (VNĐ)"/>
+                            <TextBlock Style="{StaticResource ReportNumber}" Text="{Binding Summary.OutstandingFines, StringFormat=N0}" Foreground="#A86430"/>
+                        </StackPanel>
+                    </Border>
+                </UniformGrid>
+                <TextBlock Style="{StaticResource ReportHeader}" Text="SÁCH ĐƯỢC MƯỢN NHIỀU (TOP 20)"/>
+                <DataGrid Style="{StaticResource ReportGrid}" ItemsSource="{Binding TopBooks}" Height="235">
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="Mã sách" Binding="{Binding BookId}" Width="85"/>
+                        <DataGridTextColumn Header="Tên sách" Binding="{Binding Title}" Width="*" MinWidth="240"/>
+                        <DataGridTextColumn Header="Lượt cuốn" Binding="{Binding Copies}" Width="100"/>
+                        <DataGridTextColumn Header="Độc giả khác nhau" Binding="{Binding Readers}" Width="135"/>
+                    </DataGrid.Columns>
+                </DataGrid>
+                <TextBlock Style="{StaticResource ReportHeader}" Text="LƯỢT MƯỢN THEO NGÀY"/>
+                <DataGrid Style="{StaticResource ReportGrid}" ItemsSource="{Binding Daily}" Height="220">
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="Ngày (Việt Nam)" Binding="{Binding Day}" Width="*" MinWidth="160"/>
+                        <DataGridTextColumn Header="Phiếu mượn" Binding="{Binding Orders}" Width="130"/>
+                        <DataGridTextColumn Header="Số cuốn" Binding="{Binding Copies}" Width="130"/>
+                    </DataGrid.Columns>
+                </DataGrid>
+                <TextBlock Style="{StaticResource ReportHeader}" Text="CÁC CUỐN ĐANG QUÁ HẠN (HIỆN TẠI)"/>
+                <TextBlock Text="Danh sách hiện tại, không phụ thuộc khoảng ngày; tối đa 100 cuốn. Số ngày trễ là ước tính, không phải số ngày tính tiền phạt." TextWrapping="Wrap" Foreground="#806D8A" Margin="0,0,0,9"/>
+                <DataGrid Style="{StaticResource ReportGrid}" ItemsSource="{Binding Overdue}" Height="230">
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="Mã độc giả" Binding="{Binding ReaderCode}" Width="125"/>
+                        <DataGridTextColumn Header="Tên sách" Binding="{Binding Title}" Width="*" MinWidth="220"/>
+                        <DataGridTextColumn Header="Mã cuốn" Binding="{Binding CopyCode}" Width="125"/>
+                        <DataGridTextColumn Header="Hạn trả (VN)" Binding="{Binding DueAt}" Width="150"/>
+                        <DataGridTextColumn Header="Ngày trễ ~" Binding="{Binding DaysLate}" Width="100"/>
+                    </DataGrid.Columns>
+                </DataGrid>
+                <TextBlock Style="{StaticResource ReportHeader}" Text="TIỀN PHẠT THEO LOẠI"/>
+                <DataGrid Style="{StaticResource ReportGrid}" ItemsSource="{Binding FineBreakdown}" Height="155">
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="Loại phạt" Binding="{Binding FineTypeLabel}" Width="*" MinWidth="130"/>
+                        <DataGridTextColumn Header="Số khoản ghi trong kỳ" Binding="{Binding Count}" Width="165"/>
+                        <DataGridTextColumn Header="Số tiền ghi trong kỳ (VNĐ)" Binding="{Binding Assessed, StringFormat=N0}" Width="210"/>
+                        <DataGridTextColumn Header="Số tiền thu trong kỳ (VNĐ)" Binding="{Binding Collected, StringFormat=N0}" Width="200"/>
+                    </DataGrid.Columns>
+                </DataGrid>
+                <TextBlock Text="{Binding Note}" Foreground="#716482" FontSize="12" TextWrapping="Wrap" Margin="0,16,0,0"/>
+            </StackPanel>
+        </ScrollViewer>
+    </Grid>
+</UserControl>

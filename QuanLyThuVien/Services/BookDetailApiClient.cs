@@ -122,32 +122,92 @@ namespace QuanLyThuVien.Services
             { return "Không kết nối được API."; }
         }
 
-        // STEP 69: Location edits are restricted to Staff/Admin by the server.
-        public async Task<string> ChangeCopyLocationAsync(string token, long bookId, long copyId, string shelfLocation)
+
+        // Step 77 - reuses the existing book API client; no extra WPF service or csproj entry.
+        private const string Inventory = "http://127.0.0.1:5082/api/inventory/";
+
+        public Task<InventoryBookListResponse> InventoryBooksAsync(string token) =>
+            GetInventoryAsync<InventoryBookListResponse>(token, Inventory + "books");
+
+        public Task<InventoryBookResponse> InventoryBookAsync(string token, long bookId) =>
+            GetInventoryAsync<InventoryBookResponse>(token, Inventory + "books/" + bookId);
+
+        public Task<InventoryCopyListResponse> InventoryCopiesAsync(string token, long bookId) =>
+            GetInventoryAsync<InventoryCopyListResponse>(token, Inventory + "books/" + bookId + "/copies");
+
+        public Task<InventoryActionResponse> SaveInventoryBookAsync(string token, InventoryBookEdit book)
+        {
+            var isNew = book.BookId <= 0;
+            return ChangeInventoryAsync(token, isNew ? HttpMethod.Post : HttpMethod.Put,
+                Inventory + "books" + (isNew ? "" : "/" + book.BookId), book);
+        }
+
+        public Task<InventoryActionResponse> ReceiveStockAsync(string token, long bookId, int quantity, string shelf) =>
+            ChangeInventoryAsync(token, HttpMethod.Post, Inventory + "books/" + bookId + "/copies/batch",
+                new InventoryReceiveRequest { Quantity = quantity, ShelfLocation = shelf });
+
+        public Task<InventoryActionResponse> EditInventoryCopyAsync(string token, InventoryCopyEdit copy) =>
+            ChangeInventoryAsync(token, HttpMethod.Put, Inventory + "copies/" + copy.CopyId, copy);
+
+        public Task<InventoryActionResponse> ReportInventoryIncidentAsync(string token, long borrowDetailId,
+            string kind, decimal amount, string note) =>
+            ChangeInventoryAsync(token, HttpMethod.Post, Inventory + "loans/" + borrowDetailId + "/incident",
+                new InventoryIncidentRequest { Kind = kind, CompensationAmount = amount, Note = note });
+
+        private async Task<T> GetInventoryAsync<T>(string token, string url)
+            where T : InventoryResponseBase, new()
         {
             try
             {
-                var body = Serialize(new ChangeLocationPayload { ShelfLocation = shelfLocation });
-                using (var request = Authorized(HttpMethod.Put, Api + bookId + "/copies/" + copyId + "/location", token))
+                using (var request = Authorized(HttpMethod.Get, url, token))
+                using (var response = await Http.SendAsync(request))
                 {
-                    request.Content = new StringContent(body, Encoding.UTF8, "application/json");
+                    var json = await response.Content.ReadAsStringAsync();
+                    if (!response.IsSuccessStatusCode)
+                        return new T { Error = InventoryError(response.StatusCode, json) };
+                    return Deserialize<T>(json) ?? new T { Error = "API trả về dữ liệu trống." };
+                }
+            }
+            catch (Exception ex) when (ex is HttpRequestException || ex is TaskCanceledException ||
+                                       ex is SerializationException || ex is System.Xml.XmlException)
+            { return new T { Error = "Không kết nối được hoặc không đọc được dữ liệu từ API." }; }
+        }
+
+        private async Task<InventoryActionResponse> ChangeInventoryAsync<T>(string token, HttpMethod method,
+            string url, T body)
+        {
+            try
+            {
+                using (var request = Authorized(method, url, token))
+                {
+                    request.Content = new StringContent(Serialize(body), Encoding.UTF8, "application/json");
                     using (var response = await Http.SendAsync(request))
                     {
-                        if (response.IsSuccessStatusCode) return "Đã cập nhật vị trí cuốn sách.";
-                        if (response.StatusCode == HttpStatusCode.Forbidden) return "Tài khoản không được sửa vị trí sách.";
-                        if (response.StatusCode == HttpStatusCode.Conflict) return "Không thể đổi vị trí: cuốn có thể đang được mượn.";
-                        if (response.StatusCode == HttpStatusCode.BadRequest) return "Vị trí không hợp lệ. Chọn kệ K1-K6, tầng 1-4 và ô A1-D4.";
-                        return "Không lưu được vị trí (HTTP " + (int)response.StatusCode + ").";
+                        var json = await response.Content.ReadAsStringAsync();
+                        if (!response.IsSuccessStatusCode)
+                            return new InventoryActionResponse { Error = InventoryError(response.StatusCode, json) };
+                        return Deserialize<InventoryActionResponse>(json) ??
+                               new InventoryActionResponse { Error = "API không trả về kết quả." };
                     }
                 }
             }
-            catch (Exception ex) when (ex is HttpRequestException || ex is TaskCanceledException || ex is SerializationException)
-            { return "Không kết nối được API để lưu vị trí cuốn."; }
+            catch (Exception ex) when (ex is HttpRequestException || ex is TaskCanceledException ||
+                                       ex is SerializationException || ex is System.Xml.XmlException)
+            { return new InventoryActionResponse { Error = "Không thể gửi dữ liệu lên API." }; }
         }
-        [DataContract]
-        private sealed class ChangeLocationPayload
+
+        private static string InventoryError(HttpStatusCode code, string json)
         {
-            [DataMember(Name = "shelfLocation")] public string ShelfLocation { get; set; }
+            if (code == HttpStatusCode.Unauthorized) return "Phiên hết hạn, đăng nhập lại.";
+            if (code == HttpStatusCode.Forbidden) return "Tài khoản không có quyền quản lý kho.";
+            if (code == HttpStatusCode.NotFound) return "Không tìm thấy dữ liệu hoặc endpoint chưa được đăng ký.";
+            try
+            {
+                var item = Deserialize<InventoryActionResponse>(json);
+                if (!string.IsNullOrWhiteSpace(item?.Message)) return item.Message;
+            }
+            catch (Exception) { }
+            return "API từ chối yêu cầu (HTTP " + (int)code + ").";
         }
 
         private static HttpRequestMessage Authorized(HttpMethod method, string url, string token)
@@ -230,6 +290,103 @@ namespace QuanLyThuVien.Services
         [DataMember(Name = "copyCode")] public string CopyCode { get; set; }
         [DataMember(Name = "conditionStatus")] public string ConditionStatus { get; set; }
         [DataMember(Name = "shelfLocation")] public string ShelfLocation { get; set; }
+    }
+    // DTOs live beside BookDetailApiClient to keep step 77 at four source files.
+    public class InventoryResponseBase
+    {
+        public string Error { get; set; }
+    }
+
+    [DataContract]
+    public sealed class InventoryBookListResponse : InventoryResponseBase
+    {
+        [DataMember(Name = "books")] public System.Collections.Generic.List<InventoryBookRow> Books { get; set; }
+    }
+
+    [DataContract]
+    public sealed class InventoryBookRow
+    {
+        [DataMember(Name = "bookId")] public long BookId { get; set; }
+        [DataMember(Name = "title")] public string Title { get; set; }
+        [DataMember(Name = "isbn")] public string Isbn { get; set; }
+        [DataMember(Name = "publicationYear")] public int PublicationYear { get; set; }
+        [DataMember(Name = "publisher")] public string Publisher { get; set; }
+        [DataMember(Name = "isVisible")] public bool IsVisible { get; set; }
+        [DataMember(Name = "totalCopies")] public long TotalCopies { get; set; }
+        [DataMember(Name = "availableCopies")] public long AvailableCopies { get; set; }
+        [DataMember(Name = "onLoanCopies")] public long OnLoanCopies { get; set; }
+        public string VisibleText { get { return IsVisible ? "Hiển thị" : "Đã ẩn"; } }
+    }
+
+    [DataContract]
+    public sealed class InventoryBookResponse : InventoryResponseBase
+    {
+        [DataMember(Name = "book")] public InventoryBookEdit Book { get; set; }
+    }
+
+    [DataContract]
+    public sealed class InventoryBookEdit
+    {
+        [DataMember(Name = "bookId")] public long BookId { get; set; }
+        [DataMember(Name = "title")] public string Title { get; set; }
+        [DataMember(Name = "isbn")] public string Isbn { get; set; }
+        [DataMember(Name = "description")] public string Description { get; set; }
+        [DataMember(Name = "publicationYear")] public int? PublicationYear { get; set; }
+        [DataMember(Name = "publisherId")] public long? PublisherId { get; set; }
+        [DataMember(Name = "authorIds")] public System.Collections.Generic.List<long> AuthorIds { get; set; }
+        [DataMember(Name = "categoryIds")] public System.Collections.Generic.List<long> CategoryIds { get; set; }
+        [DataMember(Name = "isVisible")] public bool IsVisible { get; set; }
+    }
+
+    [DataContract]
+    public sealed class InventoryCopyListResponse : InventoryResponseBase
+    {
+        [DataMember(Name = "copies")] public System.Collections.Generic.List<InventoryCopyRow> Copies { get; set; }
+    }
+
+    [DataContract]
+    public sealed class InventoryCopyRow
+    {
+        [DataMember(Name = "copyId")] public long CopyId { get; set; }
+        [DataMember(Name = "copyCode")] public string CopyCode { get; set; }
+        [DataMember(Name = "conditionStatus")] public string ConditionStatus { get; set; }
+        [DataMember(Name = "shelfLocation")] public string ShelfLocation { get; set; }
+        [DataMember(Name = "conditionNote")] public string ConditionNote { get; set; }
+        [DataMember(Name = "onLoan")] public bool OnLoan { get; set; }
+        [DataMember(Name = "openBorrowDetailId")] public long? OpenBorrowDetailId { get; set; }
+        public string LoanText { get { return OnLoan ? "Đang mượn #" + OpenBorrowDetailId : "Trong kho"; } }
+    }
+
+    [DataContract]
+    public sealed class InventoryActionResponse : InventoryResponseBase
+    {
+        [DataMember(Name = "message")] public string Message { get; set; }
+        [DataMember(Name = "bookId")] public long BookId { get; set; }
+        [DataMember(Name = "quantity")] public int Quantity { get; set; }
+    }
+
+    [DataContract]
+    internal sealed class InventoryReceiveRequest
+    {
+        [DataMember(Name = "quantity")] public int Quantity { get; set; }
+        [DataMember(Name = "shelfLocation")] public string ShelfLocation { get; set; }
+    }
+
+    [DataContract]
+    public sealed class InventoryCopyEdit
+    {
+        [DataMember(Name = "copyId")] public long CopyId { get; set; }
+        [DataMember(Name = "conditionStatus")] public string ConditionStatus { get; set; }
+        [DataMember(Name = "shelfLocation")] public string ShelfLocation { get; set; }
+        [DataMember(Name = "conditionNote")] public string ConditionNote { get; set; }
+    }
+
+    [DataContract]
+    internal sealed class InventoryIncidentRequest
+    {
+        [DataMember(Name = "kind")] public string Kind { get; set; }
+        [DataMember(Name = "compensationAmount")] public decimal CompensationAmount { get; set; }
+        [DataMember(Name = "note")] public string Note { get; set; }
     }
 
     // STEP 68: Standalone HTTP client for location-only data. No database secrets in WPF.
