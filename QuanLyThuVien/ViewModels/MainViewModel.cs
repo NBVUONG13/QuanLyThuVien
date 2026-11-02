@@ -16,7 +16,7 @@ namespace QuanLyThuVien.ViewModels
         private object _currentPage;
         private object _readerDetailReturnPage;
         private string _username = "", _role = "", _status = "Đang xác minh phiên...";
-        private bool _authenticated, _loggingOut;
+        private bool _authenticated, _loggingOut, _isAssistantOpen;
 
         public event EventHandler LogoutRequested;
 
@@ -29,6 +29,7 @@ namespace QuanLyThuVien.ViewModels
             MapCommand = new AsyncCommand(_ => NavigateMapAsync(), _ => IsAuthenticated);
             DashboardCommand = new AsyncCommand(_ => NavigateDashboardAsync());
             ReportsCommand = new AsyncCommand(_ => NavigateReportsAsync(), _ => IsAdmin);
+            AssistantCommand = new AsyncCommand(_ => NavigateAssistantAsync(), _ => IsReader);
             StaffCommand = new AsyncCommand(_ => NavigateStaffAsync(), _ => IsAdmin);
             AttendanceCommand = new AsyncCommand(_ => NavigateAttendanceAsync(), _ => CanManage);
             ReaderCommand = new AsyncCommand(_ => NavigateReadersAsync(), _ => IsAuthenticated);
@@ -53,6 +54,7 @@ namespace QuanLyThuVien.ViewModels
 
         public DashboardViewModel Dashboard { get; }
         public LibraryReportsViewModel ReportsPage { get; private set; }
+        public BookAssistantViewModel AssistantPage { get; private set; }
         public BookManagementViewModel Books { get; private set; }
         public LibraryMapViewModel MapPage { get; private set; }
         public HRManagementViewModel Staff { get; private set; }
@@ -66,6 +68,8 @@ namespace QuanLyThuVien.ViewModels
         private string _notificationsMenuText = "THÔNG BÁO";
         public string NotificationsMenuText { get => _notificationsMenuText; private set => Set(ref _notificationsMenuText, value); }
         public object CurrentPage { get => _currentPage; private set => Set(ref _currentPage, value); }
+        // True only when the Reader opens the floating chat panel; keeps CurrentPage unchanged.
+        public bool IsAssistantOpen { get => _isAssistantOpen; private set => Set(ref _isAssistantOpen, value); }
         public string Username { get => _username; private set => Set(ref _username, value); }
         public string Role { get => _role; private set => Set(ref _role, value); }
         public string Status { get => _status; private set => Set(ref _status, value); }
@@ -79,6 +83,7 @@ namespace QuanLyThuVien.ViewModels
         public ICommand MapCommand { get; }
         public ICommand DashboardCommand { get; }
         public ICommand ReportsCommand { get; }
+        public ICommand AssistantCommand { get; }
         public ICommand StaffCommand { get; }
         public ICommand AttendanceCommand { get; }
         public ICommand ReaderCommand { get; }
@@ -111,6 +116,7 @@ namespace QuanLyThuVien.ViewModels
             Notify(nameof(CanManage));
             (StaffCommand as AsyncCommand)?.Refresh();
             (ReportsCommand as AsyncCommand)?.Refresh();
+            (AssistantCommand as AsyncCommand)?.Refresh();
             (AttendanceCommand as AsyncCommand)?.Refresh();
             (InventoryCommand as AsyncCommand)?.Refresh();
             (MapCommand as AsyncCommand)?.Refresh();
@@ -141,6 +147,9 @@ namespace QuanLyThuVien.ViewModels
             Loans.IdentityDetailRequested += username => { _ = OpenRequestReaderAsync(username, CounterPage); };
             if (IsReader)
             {
+                AssistantPage = new BookAssistantViewModel(_token);
+                AssistantPage.BookRequested += id => { _ = OpenAssistantBookAsync(id); };
+                AssistantPage.FindShelfRequested += id => { IsAssistantOpen = false; _ = NavigateMapAsync(id); };
                 Notifications = new NotificationCenterViewModel(_token);
                 Notifications.UnreadCountChanged += count =>
                     NotificationsMenuText = count > 0 ? "THÔNG BÁO (" + count + ")" : "THÔNG BÁO";
@@ -219,6 +228,36 @@ namespace QuanLyThuVien.ViewModels
             if (!IsAuthenticated) return;
             CurrentPage = Dashboard;
             await Dashboard.LoadAsync();
+        }
+
+        // Floating chat: toggle without navigating away from the page being viewed.
+        private Task NavigateAssistantAsync()
+        {
+            if (!IsReader || AssistantPage == null) return Task.CompletedTask;
+            IsAssistantOpen = !IsAssistantOpen;
+            return Task.CompletedTask;
+        }
+
+        private async Task OpenAssistantBookAsync(long bookId)
+        {
+            if (!IsReader || Books == null) return;
+            IsAssistantOpen = false;
+            await NavigateHomeAsync();
+            // Use the existing detail popup + rating + request flow on Home.
+            var book = Books.Books.FirstOrDefault(b => b.BookId == bookId);
+            if (book == null && AssistantPage != null)
+            {
+                // Home might have an active filter. Re-search by the exact grounded title.
+                var suggestion = AssistantPage.Suggestions.FirstOrDefault(b => b.BookId == bookId);
+                if (suggestion != null)
+                {
+                    Books.Query = suggestion.Title;
+                    await Books.SearchAsync();
+                    book = Books.Books.FirstOrDefault(b => b.BookId == bookId);
+                }
+            }
+            if (book != null) Books.OpenBookCommand.Execute(book);
+            else Status = "Không tìm thấy sách trong danh sách hiện tại. Hãy tải lại Trang chủ.";
         }
 
         private async Task NavigateReportsAsync()
