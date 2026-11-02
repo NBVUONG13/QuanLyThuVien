@@ -20,6 +20,8 @@ namespace QuanLyThuVien.ViewModels
         private bool _busy;
         private PayrollRow _selectedPayroll;
         private string _payrollStatus = "", _newHourlyRate = "", _rateReason = "";
+        private string _payrollLinesStatus = "Chọn nhân viên trong bảng lương phía trên để xem các ca.";
+        private int _payrollLinesRequestVersion;
 
         public HRManagementViewModel(string token, string role)
         {
@@ -48,13 +50,31 @@ namespace QuanLyThuVien.ViewModels
             get { return _selectedPayroll; }
             set
             {
-                if (Set(ref _selectedPayroll, value))
+                if (!Set(ref _selectedPayroll, value)) return;
+
+                NewHourlyRate = value == null ? "" :
+                    value.CurrentHourlyRate.ToString("0.##", CultureInfo.InvariantCulture);
+                PayrollLines.Clear();
+                int requestVersion = ++_payrollLinesRequestVersion;
+
+                if (value == null)
                 {
-                    NewHourlyRate = value == null ? "" : value.CurrentHourlyRate.ToString("0.##", CultureInfo.InvariantCulture);
-                    PayrollLines.Clear();
+                    PayrollLinesStatus = "Chọn nhân viên trong bảng lương phía trên để xem các ca.";
+                }
+                else if (value.SalaryId <= 0)
+                {
+                    PayrollLinesStatus = ExplainNotPrepared(value);
+                }
+                else
+                {
+                    PayrollLinesStatus = "Đang tải chi tiết các ca của " + value.FullName + "...";
+                    // The selection triggers the same API call as the old manual button.
+                    // Do not block on Busy: refresh/prepare is allowed to update selection.
+                    _ = LoadPayrollLinesAsync(value, requestVersion);
                 }
             }
         }
+        public string PayrollLinesStatus { get => _payrollLinesStatus; private set => Set(ref _payrollLinesStatus, value); }
         public string NewHourlyRate { get => _newHourlyRate; set => Set(ref _newHourlyRate, value); }
         public string RateReason { get => _rateReason; set => Set(ref _rateReason, value); }
         public string PayrollStatus { get => _payrollStatus; private set => Set(ref _payrollStatus, value); }
@@ -112,7 +132,13 @@ namespace QuanLyThuVien.ViewModels
             if (!ValidMonth()) { PayrollStatus = "Nhập tháng đúng dạng YYYY-MM."; return; }
             var selectedUserId = SelectedPayroll == null ? 0 : SelectedPayroll.StaffUserId;
             var result = await _api.ListPayrollAsync(_token, Month.Trim());
-            if (!result.IsSuccess) { PayrollStatus = result.Message; return; }
+            if (!result.IsSuccess)
+            {
+                PayrollRows.Clear();
+                SelectedPayroll = null;
+                PayrollStatus = result.Message;
+                return;
+            }
             PayrollRows.Clear();
             PayrollRow restored = null;
             foreach (var row in result.Rows)
@@ -120,7 +146,8 @@ namespace QuanLyThuVien.ViewModels
                 PayrollRows.Add(row);
                 if (row.StaffUserId == selectedUserId) restored = row;
             }
-            SelectedPayroll = restored;
+            // Auto-select first employee on initial load, and keep the current employee on refresh.
+            SelectedPayroll = restored ?? (PayrollRows.Count > 0 ? PayrollRows[0] : null);
             PayrollStatus = "Bảng lương tháng " + Month + ": " + PayrollRows.Count + " nhân viên.";
         }
         private async Task PreparePayrollAsync()
@@ -178,21 +205,72 @@ namespace QuanLyThuVien.ViewModels
             catch (Exception) { PayrollStatus = "Không cập nhật được đơn giá giờ công."; }
             finally { Busy = false; }
         }
+        // Kept the old manual Refresh button. Selection also loads automatically.
         private async Task LoadSelectedPayrollLinesAsync()
         {
-            if (!IsAdmin || Busy || SelectedPayroll == null) return;
-            if (SelectedPayroll.SalaryId == 0) { PayrollStatus = "Cần tính bảng lương để xem chi tiết."; return; }
-            Busy = true;
+            if (!IsAdmin) return;
+            var selected = SelectedPayroll;
+            int requestVersion = ++_payrollLinesRequestVersion;
+            PayrollLines.Clear();
+            if (selected == null)
+            {
+                PayrollLinesStatus = "Hãy chọn nhân viên ở bảng lương phía trên.";
+                return;
+            }
+            if (selected.SalaryId <= 0)
+            {
+                PayrollLinesStatus = ExplainNotPrepared(selected);
+                return;
+            }
+            PayrollLinesStatus = "Đang tải lại các ca của " + selected.FullName + "...";
+            await LoadPayrollLinesAsync(selected, requestVersion);
+        }
+
+        private async Task LoadPayrollLinesAsync(PayrollRow selected, int requestVersion)
+        {
             try
             {
-                var result = await _api.ListPayrollLinesAsync(_token, SelectedPayroll.SalaryId);
-                if (!result.IsSuccess) { PayrollStatus = result.Message; return; }
+                var result = await _api.ListPayrollLinesAsync(_token, selected.SalaryId);
+                // Ignore an old response if the Admin selected a different employee meanwhile.
+                if (requestVersion != _payrollLinesRequestVersion ||
+                    !Object.ReferenceEquals(selected, SelectedPayroll)) return;
+                if (!result.IsSuccess)
+                {
+                    PayrollLinesStatus = "Không tải được chi tiết ca: " + (result.Message ?? "Lỗi API.");
+                    return;
+                }
                 PayrollLines.Clear();
                 foreach (var item in result.Lines) PayrollLines.Add(item);
-                PayrollStatus = "Có " + PayrollLines.Count + " ca đã tính, đơn giá lấy tại thời điểm check-in.";
+                if (PayrollLines.Count > 0)
+                    PayrollLinesStatus = "Đã tải " + PayrollLines.Count + " ca của " + selected.FullName +
+                        ". Đơn giá là mức đã lưu lúc check-in.";
+                else if (selected.ClosedShifts == 0)
+                    PayrollLinesStatus = selected.OpenShifts > 0
+                        ? "Nhân viên đang có " + selected.OpenShifts + " ca chưa check-out. Ca đang mở chưa được tính lương."
+                        : "Không có ca nào đã check-out trong tháng " + Month + " cho " + selected.FullName + ".";
+                else
+                    PayrollLinesStatus = "Chưa có dòng chi tiết dù có " + selected.ClosedShifts +
+                        " ca đã check-out. Nếu bảng còn NHÁP, bấm TÍNH / CẬP NHẬT BẢNG NHÁP rồi kiểm tra lại.";
             }
-            catch (Exception) { PayrollStatus = "Không tải được chi tiết bảng lương."; }
-            finally { Busy = false; }
+            catch (Exception)
+            {
+                if (requestVersion == _payrollLinesRequestVersion &&
+                    Object.ReferenceEquals(selected, SelectedPayroll))
+                    PayrollLinesStatus = "Không tải được chi tiết ca. Kiểm tra API đang chạy và thử TẢI LẠI CHI TIẾT.";
+            }
+        }
+
+        private string ExplainNotPrepared(PayrollRow selected)
+        {
+            if (selected.ClosedShifts > 0)
+                return "Nhân viên " + selected.FullName + " có " + selected.ClosedShifts +
+                    " ca đã check-out trong tháng " + Month +
+                    ", nhưng CHƯA TÍNH BẢNG LƯƠNG. Bấm TÍNH / CẬP NHẬT BẢNG NHÁP ở phía trên.";
+            if (selected.OpenShifts > 0)
+                return "Nhân viên " + selected.FullName + " có " + selected.OpenShifts +
+                    " ca đang mở. Staff cần check-out; sau đó Admin bấm TÍNH / CẬP NHẬT BẢNG NHÁP.";
+            return "Nhân viên " + selected.FullName + " chưa có ca đã check-out trong tháng " +
+                Month + ". Staff phải check-in/check-out trước khi có dữ liệu lương.";
         }
         private void ReplaceStaff(IEnumerable<StaffItem> data)
         {

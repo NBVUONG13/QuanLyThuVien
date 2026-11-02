@@ -16,7 +16,7 @@ namespace QuanLyThuVien.ViewModels
         private object _currentPage;
         private object _readerDetailReturnPage;
         private string _username = "", _role = "", _status = "Đang xác minh phiên...";
-        private bool _authenticated, _loggingOut, _isAssistantOpen;
+        private bool _authenticated, _loggingOut, _isAssistantOpen, _isNotificationOpen;
 
         public event EventHandler LogoutRequested;
 
@@ -29,7 +29,7 @@ namespace QuanLyThuVien.ViewModels
             MapCommand = new AsyncCommand(_ => NavigateMapAsync(), _ => IsAuthenticated);
             DashboardCommand = new AsyncCommand(_ => NavigateDashboardAsync());
             ReportsCommand = new AsyncCommand(_ => NavigateReportsAsync(), _ => IsAdmin);
-            AssistantCommand = new AsyncCommand(_ => NavigateAssistantAsync(), _ => IsReader);
+            AssistantCommand = new AsyncCommand(_ => NavigateAssistantAsync(), _ => IsAuthenticated);
             StaffCommand = new AsyncCommand(_ => NavigateStaffAsync(), _ => IsAdmin);
             AttendanceCommand = new AsyncCommand(_ => NavigateAttendanceAsync(), _ => CanManage);
             ReaderCommand = new AsyncCommand(_ => NavigateReadersAsync(), _ => IsAuthenticated);
@@ -70,6 +70,9 @@ namespace QuanLyThuVien.ViewModels
         public object CurrentPage { get => _currentPage; private set => Set(ref _currentPage, value); }
         // True only when the Reader opens the floating chat panel; keeps CurrentPage unchanged.
         public bool IsAssistantOpen { get => _isAssistantOpen; private set => Set(ref _isAssistantOpen, value); }
+        // Popup IsOpen is TwoWay: clicking outside automatically closes it and updates this value.
+        public bool IsNotificationOpen { get => _isNotificationOpen; set => Set(ref _isNotificationOpen, value); }
+        public bool HasUnreadNotifications => Notifications != null && Notifications.UnreadCount > 0;
         public string Username { get => _username; private set => Set(ref _username, value); }
         public string Role { get => _role; private set => Set(ref _role, value); }
         public string Status { get => _status; private set => Set(ref _status, value); }
@@ -145,14 +148,23 @@ namespace QuanLyThuVien.ViewModels
             Loans = new BorrowReturnViewModel(_token, Role);
             CounterPage = new WalkInCounterPage(Loans);
             Loans.IdentityDetailRequested += username => { _ = OpenRequestReaderAsync(username, CounterPage); };
+            AssistantPage = new BookAssistantViewModel(_token);
+            // IMPORTANT: the floating UserControl was bound before login validation finished.
+            // Notify the View to re-evaluate its DataContext (without this, GỬI stays disabled).
+            Notify(nameof(AssistantPage));
+            AssistantPage.BookRequested += id => { _ = OpenAssistantBookAsync(id); };
+            AssistantPage.FindShelfRequested += id => { IsAssistantOpen = false; _ = NavigateMapAsync(id); };
             if (IsReader)
             {
-                AssistantPage = new BookAssistantViewModel(_token);
-                AssistantPage.BookRequested += id => { _ = OpenAssistantBookAsync(id); };
-                AssistantPage.FindShelfRequested += id => { IsAssistantOpen = false; _ = NavigateMapAsync(id); };
                 Notifications = new NotificationCenterViewModel(_token);
                 Notifications.UnreadCountChanged += count =>
+                {
                     NotificationsMenuText = count > 0 ? "THÔNG BÁO (" + count + ")" : "THÔNG BÁO";
+                    Notify(nameof(HasUnreadNotifications));
+                };
+                // The bell's list binds to the VM created after the Window's first render.
+                Notify(nameof(Notifications));
+                Notify(nameof(HasUnreadNotifications));
             }
             FinePage = new FineManagementViewModel(_token, Role);
             Requests = new BorrowRequestViewModel(_token, Role);
@@ -233,14 +245,15 @@ namespace QuanLyThuVien.ViewModels
         // Floating chat: toggle without navigating away from the page being viewed.
         private Task NavigateAssistantAsync()
         {
-            if (!IsReader || AssistantPage == null) return Task.CompletedTask;
+            if (!IsAuthenticated || AssistantPage == null) return Task.CompletedTask;
             IsAssistantOpen = !IsAssistantOpen;
+            if (IsAssistantOpen) IsNotificationOpen = false;
             return Task.CompletedTask;
         }
 
         private async Task OpenAssistantBookAsync(long bookId)
         {
-            if (!IsReader || Books == null) return;
+            if (!IsAuthenticated || Books == null) return;
             IsAssistantOpen = false;
             await NavigateHomeAsync();
             // Use the existing detail popup + rating + request flow on Home.
@@ -318,8 +331,12 @@ namespace QuanLyThuVien.ViewModels
         private async Task NavigateNotificationsAsync()
         {
             if (!IsReader || Notifications == null) return;
-            CurrentPage = Notifications;
-            await Notifications.LoadAsync();
+            IsNotificationOpen = !IsNotificationOpen;
+            if (IsNotificationOpen)
+            {
+                IsAssistantOpen = false;
+                await Notifications.LoadAsync();
+            }
         }
 
         private async Task NavigatePolicyAsync()

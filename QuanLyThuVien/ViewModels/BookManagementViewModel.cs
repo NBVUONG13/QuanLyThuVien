@@ -2,6 +2,12 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
+using System.IO;
+using System.Net;
+using System.Net.Http;
+using System.Net.Http.Headers;
+using System.Runtime.Serialization;
+using System.Runtime.Serialization.Json;
 using System.Collections.ObjectModel;
 using System.Linq;
 using System.Threading.Tasks;
@@ -96,6 +102,33 @@ namespace QuanLyThuVien.ViewModels
                 finally { _updatingFacets = false; }
                 await SearchAsync();
             });
+            OpenRecommendationCommand = new AsyncCommand(async parameter =>
+            {
+                var recommendation = parameter as PersonalizedBookChoice;
+                if (recommendation == null) return;
+                try
+                {
+                    CatalogBook target = _allBooks.FirstOrDefault(b => b.BookId == recommendation.BookId);
+                    if (target == null)
+                    {
+                        // Home may be filtered or its catalog API may cap the book list.
+                        var result = await _catalog.SearchAsync(_token, recommendation.Title);
+                        if (result.IsSuccess && result.Books != null)
+                            target = result.Books.FirstOrDefault(b => b.BookId == recommendation.BookId);
+                    }
+                    if (target == null)
+                    {
+                        RecommendationMessage = "Sách chưa xuất hiện trong danh mục tải về. Hãy tìm theo tên sách.";
+                        return;
+                    }
+                    SelectedBook = target;
+                    await LoadDetailAsync(); // Existing detail + rating + loan-request flow.
+                }
+                catch (Exception)
+                {
+                    RecommendationMessage = "Không mở được sách gợi ý. Hãy thử tìm theo tên sách.";
+                }
+            });
             OpenBookCommand = new AsyncCommand(async book =>
             {
                 if (!(book is CatalogBook selected)) return;
@@ -165,6 +198,19 @@ namespace QuanLyThuVien.ViewModels
             }
         }
         public ObservableCollection<CatalogBook> Books { get; } = new ObservableCollection<CatalogBook>();
+        // STEP 83: personalized Reader book row on the existing Home, not a new page.
+        public ObservableCollection<PersonalizedBookChoice> RecommendedBooks { get; } =
+            new ObservableCollection<PersonalizedBookChoice>();
+        private string _recommendationMessage = "Đang tải gợi ý...";
+        public string RecommendationMessage
+        {
+            get => _recommendationMessage;
+            private set => Set(ref _recommendationMessage, value);
+        }
+        public ICommand OpenRecommendationCommand { get; private set; }
+        private static readonly HttpClient RecommendationHttp =
+            new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
+
         public ObservableCollection<BookCopyDto> Copies { get; } = new ObservableCollection<BookCopyDto>();
         public ObservableCollection<ReferenceEntry> Authors { get; } = new ObservableCollection<ReferenceEntry>();
         public ObservableCollection<ReferenceEntry> Publishers { get; } = new ObservableCollection<ReferenceEntry>();
@@ -307,6 +353,44 @@ namespace QuanLyThuVien.ViewModels
             if (!_booksLoaded) await SearchAsync();
             if (!_referencesLoaded) await LoadReferencesAsync();
             if (CanManage && !_inventoryLoaded) await RefreshInventoryAsync();
+            if (IsReader) await LoadRecommendationsAsync();
+        }
+
+        private async Task LoadRecommendationsAsync()
+        {
+            try
+            {
+                using (var request = new HttpRequestMessage(HttpMethod.Get,
+                    "http://127.0.0.1:5082/api/reader/recommendations"))
+                {
+                    request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _token);
+                    using (var response = await RecommendationHttp.SendAsync(request))
+                    {
+                        if (response.StatusCode == HttpStatusCode.NotFound)
+                        { RecommendationMessage = "API gợi ý chưa được đăng ký trên backend."; return; }
+                        if (!response.IsSuccessStatusCode)
+                        { RecommendationMessage = "Không tải được gợi ý (HTTP " + (int)response.StatusCode + ")."; return; }
+                        byte[] body = await response.Content.ReadAsByteArrayAsync();
+                        using (var ms = new MemoryStream(body))
+                        {
+                            var serializer = new DataContractJsonSerializer(typeof(PersonalizedBookResponse));
+                            var result = serializer.ReadObject(ms) as PersonalizedBookResponse;
+                            if (result == null)
+                            { RecommendationMessage = "Dữ liệu gợi ý không hợp lệ."; return; }
+                            RecommendedBooks.Clear();
+                            if (result.Recommendations != null)
+                                foreach (var item in result.Recommendations)
+                                    RecommendedBooks.Add(item);
+                            RecommendationMessage = result.Note ?? "Đã tải gợi ý.";
+                        }
+                    }
+                }
+            }
+            catch (Exception ex) when (ex is HttpRequestException || ex is TaskCanceledException ||
+                ex is SerializationException || ex is IOException || ex is InvalidDataContractException)
+            {
+                RecommendationMessage = "Không tải được gợi ý. Kiểm tra API và kết nối thư viện.";
+            }
         }
 
         // Normalise Vietnamese accents, including Đ/đ, for fast local suggestions.
@@ -973,6 +1057,27 @@ namespace QuanLyThuVien.ViewModels
             finally { InventoryBusy = false; }
             await RefreshInventoryAsync();
         }
+    }
+
+    [DataContract]
+    public sealed class PersonalizedBookChoice
+    {
+        [DataMember(Name = "bookId")] public long BookId { get; set; }
+        [DataMember(Name = "title")] public string Title { get; set; }
+        [DataMember(Name = "authors")] public string Authors { get; set; }
+        [DataMember(Name = "categories")] public string Categories { get; set; }
+        [DataMember(Name = "availableCopies")] public int AvailableCopies { get; set; }
+        [DataMember(Name = "reason")] public string Reason { get; set; }
+        public string Availability => AvailableCopies > 0
+            ? "Còn " + AvailableCopies + " cuốn" : "Tạm hết sách";
+    }
+
+    [DataContract]
+    internal sealed class PersonalizedBookResponse
+    {
+        [DataMember(Name = "note")] public string Note { get; set; }
+        [DataMember(Name = "personalized")] public bool Personalized { get; set; }
+        [DataMember(Name = "recommendations")] public PersonalizedBookChoice[] Recommendations { get; set; }
     }
 
     // One checkbox item; no separate ViewModel or file for a reference selection.

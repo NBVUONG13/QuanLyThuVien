@@ -36,6 +36,10 @@ app.MapStaffAttendanceEndpoints();
 app.MapStaffPayrollEndpoints();
 // Step 81: Bao cao quan tri chi danh cho Admin.
 app.MapLibraryReportsEndpoints();
+// Step 82: Tro ly tim sach, local LM Studio, Reader/Staff/Admin.
+app.MapBookAssistantEndpoints();
+// Step 83: Goi y sach ca nhan hoa tren Trang chu cho Reader.
+app.MapPersonalizedRecommendationEndpoints();
 
 // Explicit one-time CLI path. Never expose bootstrap as HTTP.
 if (args.Contains("--bootstrap-admin", StringComparer.Ordinal))

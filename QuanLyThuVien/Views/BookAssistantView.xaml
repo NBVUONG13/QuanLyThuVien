@@ -28,7 +28,7 @@
         <!-- Dedicated scroll area so long conversations cannot expand the floating window. -->
         <Border Grid.Row="1" CornerRadius="9" BorderBrush="#E4DEEE" BorderThickness="1"
                 Background="White" Margin="0,0,0,9">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="9,10">
+            <ScrollViewer x:Name="ConversationScrollViewer" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="9,10">
                 <ItemsControl ItemsSource="{Binding Messages}">
                     <ItemsControl.ItemTemplate>
                         <DataTemplate>
@@ -74,14 +74,12 @@
         <DockPanel Grid.Row="3" LastChildFill="True">
             <Button DockPanel.Dock="Right" Content="GỬI" Style="{StaticResource ChatAction}"
                     Command="{Binding AskCommand}" Margin="8,0,0,0" Width="58" Height="41"/>
-            <TextBox Text="{Binding Question, UpdateSourceTrigger=PropertyChanged}"
+            <TextBox x:Name="QuestionTextBox" KeyDown="QuestionTextBox_KeyDown"
+                     Text="{Binding Question, UpdateSourceTrigger=PropertyChanged}"
                      MaxLength="400" FontSize="13" Foreground="#302740"
                      Background="White" BorderBrush="#CFC6E0" BorderThickness="1"
                      VerticalContentAlignment="Center" Padding="9,4"
                      ToolTip="Nhập câu hỏi, nhấn Enter để gửi">
-                <TextBox.InputBindings>
-                    <KeyBinding Key="Enter" Command="{Binding AskCommand}"/>
-                </TextBox.InputBindings>
             </TextBox>
         </DockPanel>
     </Grid>

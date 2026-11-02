@@ -119,7 +119,7 @@
                     </DataGrid.Columns>
                 </DataGrid>
                 <WrapPanel Margin="0,0,0,20">
-                    <Button Content="XEM CÁC CA ĐÃ TÍNH" Command="{Binding LoadPayrollLinesCommand}" Height="38" Width="178" Margin="0,0,9,9"/>
+                    <Button Content="TẢI LẠI CHI TIẾT CA" Command="{Binding LoadPayrollLinesCommand}" Height="38" Width="180" Margin="0,0,9,9"/>
                     <Button Content="CHỐT BẢNG LƯƠNG" Command="{Binding FinalizePayrollCommand}" Height="38" Width="163"
                             Background="#2D755E" Foreground="White" BorderThickness="0" Margin="0,0,9,9"/>
                     <Button Content="ĐÁNH DẤU ĐÃ TRẢ" Command="{Binding MarkPaidCommand}" Height="38" Width="169"
@@ -139,7 +139,9 @@
                                 Background="#3F5D97" Foreground="White" BorderThickness="0" HorizontalAlignment="Left"/>
                     </StackPanel>
                 </Border>
-                <TextBlock Text="CHI TIẾT CÁC CA TRONG BẢNG LƯƠNG ĐÃ CHỌN" FontWeight="Bold" FontSize="18" Foreground="#352549" Margin="0,0,0,12"/>
+                <TextBlock Text="CHI TIẾT CÁC CA TRONG BẢNG LƯƠNG ĐÃ CHỌN" FontWeight="Bold" FontSize="18" Foreground="#352549" Margin="0,0,0,6"/>
+                <TextBlock Text="Chọn một nhân viên ở bảng lương phía trên để tự động xem các ca đã tính." Foreground="#64748B" Margin="0,0,0,6" TextWrapping="Wrap"/>
+                <TextBlock Text="{Binding PayrollLinesStatus}" Foreground="#2D5A9C" Margin="0,0,0,12" TextWrapping="Wrap"/>
                 <DataGrid ItemsSource="{Binding PayrollLines}" IsReadOnly="True" AutoGenerateColumns="False"
                           Height="240" CanUserAddRows="False" ScrollViewer.HorizontalScrollBarVisibility="Auto">
                     <DataGrid.Columns>

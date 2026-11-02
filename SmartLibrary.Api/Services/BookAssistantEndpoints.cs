@@ -13,7 +13,7 @@ namespace SmartLibrary.Api.Services;
 // No personal profile, password, CCCD, phone or database credential is sent to LM Studio.
 public static class BookAssistantEndpoints
 {
-    private static readonly HttpClient LocalAiHttp = new() { Timeout = TimeSpan.FromSeconds(20) };
+    private static readonly HttpClient LocalAiHttp = new() { Timeout = TimeSpan.FromSeconds(45) };
     private static readonly HashSet<string> StopWords = new(StringComparer.OrdinalIgnoreCase)
     {
         "sach", "cuon", "quyen", "toi", "minh", "ban", "cho", "tim", "muon", "goi", "y", "ve",
@@ -40,7 +40,8 @@ public static class BookAssistantEndpoints
             string? token = Bearer(request);
             var actor = sessions.Validate(token);
             if (actor is null) return Results.Unauthorized();
-            if (actor.Role != "Reader") return Results.StatusCode(StatusCodes.Status403Forbidden);
+            if (actor.Role != "Reader" && actor.Role != "Staff" && actor.Role != "Admin")
+                return Results.StatusCode(StatusCodes.Status403Forbidden);
             string question = (body?.Question ?? "").Trim();
             if (question.Length is < 2 or > 400)
                 return Results.BadRequest(new { message = "Câu hỏi cần từ 2 đến 400 ký tự." });
@@ -53,6 +54,17 @@ public static class BookAssistantEndpoints
                 await using (var db = new NpgsqlConnection(cs))
                 {
                     await db.OpenAsync(ct);
+                    // Sensitive operational facts are calculated in PostgreSQL and returned
+                    // directly, NOT interpreted/guessed by the small local model.
+                    var facts = await AnswerOperationalQuestionAsync(question, actor.Role, actor.UserId, db, ct);
+                    if (facts != null)
+                        return Results.Ok(new
+                        {
+                            reply = facts,
+                            aiUsed = false,
+                            note = "Dữ liệu trực tiếp từ PostgreSQL, theo quyền đăng nhập.",
+                            suggestions = Array.Empty<object>()
+                        });
                     await using var cmd = new NpgsqlCommand(@"
                         SELECT b.book_id, b.title, COALESCE(b.description,''), COALESCE(b.publication_year,0),
                           COALESCE((SELECT string_agg(DISTINCT a.name, ', ' ORDER BY a.name)
@@ -91,6 +103,46 @@ public static class BookAssistantEndpoints
                 bool matches = ranked.Any(x => x.Score > 0);
                 var suggestions = ranked.Where(x => !matches || x.Score > 0).Take(6)
                     .Select(x => x.Book).ToList();
+                // Book availability questions must use an exact grounded book title.
+                // Never guess from a partial/fuzzy match and claim an exact quantity.
+                string normalizedQuestion = Normalize(question);
+                bool stockIntent = ContainsAny(normalizedQuestion, "con sach", "con khong", "con may", "bao nhieu cuon",
+                    "bao nhieu quyen", "con bao nhieu", "khi nao co", "bao gio co",
+                    "han tra gan nhat", "ngay tra gan nhat", "ngay tra sap toi", "het sach");
+                if (stockIntent)
+                {
+                    var exact = catalog.Where(b => !string.IsNullOrWhiteSpace(b.Title) &&
+                        normalizedQuestion.Contains(Normalize(b.Title), StringComparison.Ordinal))
+                        .OrderByDescending(b => b.Title.Length).ToArray();
+                    if (exact.Length == 1)
+                    {
+                        var book = exact[0];
+                        string? nextDue = await NextDueAsync(config, book.BookId, ct);
+                        string result = $"{book.Title}: hiện còn {book.AvailableCopies} cuốn có thể mượn." +
+                            (book.AvailableCopies == 0 ? (nextDue is null
+                                ? " Chưa có ngày trả dự kiến từ phiếu mượn đang mở."
+                                : " Hạn trả sớm nhất của cuốn đang mượn: " + nextDue +
+                                  " (dự kiến, không bảo đảm sách được trả đúng ngày).") : "");
+                        return Results.Ok(new
+                        {
+                            reply = result,
+                            aiUsed = false,
+                            note = "Tồn kho và hạn trả lấy trực tiếp từ PostgreSQL.",
+                            suggestions = new[] { new { bookId = book.BookId, title = book.Title,
+                                author = book.Author, category = book.Category,
+                                publicationYear = book.PublicationYear,
+                                availableCopies = book.AvailableCopies, recentBorrows = book.RecentBorrows } }
+                        });
+                    }
+                    return Results.Ok(new
+                    {
+                        reply = "Hãy ghi rõ tên đầu sách chính xác để mình kiểm tra tồn kho hoặc hạn trả. " +
+                        "Nếu chưa nhớ tên, bạn có thể tìm sách theo thể loại hay tác giả trước.",
+                        aiUsed = false,
+                        note = "Cần xác định đúng đầu sách, không đoán số lượng.",
+                        suggestions = Array.Empty<object>()
+                    });
+                }
                 var list = suggestions.Select(b => new
                 {
                     bookId = b.BookId,
@@ -123,6 +175,179 @@ public static class BookAssistantEndpoints
                     statusCode: StatusCodes.Status503ServiceUnavailable);
             }
         });
+    }
+
+    private static bool ContainsAny(string text, params string[] options) =>
+        options.Any(x => text.Contains(x, StringComparison.Ordinal));
+
+    private static async Task<string?> AnswerOperationalQuestionAsync(string question,
+        string role, long userId, NpgsqlConnection db, CancellationToken ct)
+    {
+        string q = Normalize(question);
+        if (ContainsAny(q, "mat khau", "password", "cccd", "can cuoc", "so dien thoai",
+            "so cccd", "otp", "ma xac minh"))
+            return "Trợ lý không cung cấp mật khẩu, CCCD, OTP hoặc thông tin liên hệ riêng tư.";
+
+        // Query complete loan history separately; never mislabel it as currently on loan.
+        if (role == "Reader" && ContainsAny(q, "toi da muon", "minh da muon", "lich su muon",
+            "da tung muon", "da doc sach nao", "lich su doc"))
+        {
+            var lines = new List<string>();
+            await using var cmd = new NpgsqlCommand(@"
+                SELECT b.title, to_char(br.borrowed_at AT TIME ZONE 'Asia/Ho_Chi_Minh','DD/MM/YYYY'),
+                       CASE WHEN d.closed_at IS NULL THEN 'Đang mượn'
+                            WHEN d.close_reason='returned' THEN 'Đã trả'
+                            ELSE 'Đã đóng (' || COALESCE(d.close_reason,'khác') || ')' END
+                FROM public.borrow_details d JOIN public.borrows br ON br.borrow_id=d.borrow_id
+                JOIN public.book_copies cp ON cp.copy_id=d.book_copy_id
+                JOIN public.books b ON b.book_id=cp.book_id
+                WHERE br.reader_user_id=@id
+                ORDER BY br.borrowed_at DESC, d.borrow_detail_id DESC LIMIT 20;", db);
+            cmd.Parameters.AddWithValue("id", userId);
+            await using var rd = await cmd.ExecuteReaderAsync(ct);
+            while (await rd.ReadAsync(ct))
+                lines.Add($"• {rd.GetString(0)} — mượn {rd.GetString(1)} — {rd.GetString(2)}");
+            return lines.Count == 0 ? "Bạn chưa có lịch sử mượn sách." :
+                "20 lượt mượn gần nhất của bạn:\n" + string.Join("\n", lines);
+        }
+
+        if (role == "Reader" && ContainsAny(q, "tien phat", "no phat", "toi no bao nhieu",
+            "phat qua han", "phat chua tra"))
+        {
+            await using var cmd = new NpgsqlCommand(@"
+                SELECT COALESCE(SUM(GREATEST(0,f.amount - f.waived_amount -
+                  COALESCE((SELECT SUM(p.amount) FROM public.fine_payments p WHERE p.fine_id=f.fine_id),0))),0)
+                FROM public.fines f
+                JOIN public.borrow_details d ON d.borrow_detail_id=f.borrow_detail_id
+                JOIN public.borrows br ON br.borrow_id=d.borrow_id
+                WHERE br.reader_user_id=@id;", db);
+            cmd.Parameters.AddWithValue("id", userId);
+            decimal amount = (decimal)(await cmd.ExecuteScalarAsync(ct) ?? 0m);
+            return $"Dư nợ tiền phạt đã ghi nhận của bạn hiện là {amount:N0} VND. " +
+                "Phí quá hạn chưa được hệ thống lập phiếu có thể chưa tính vào số này.";
+        }
+
+        // Reader can only query their own issued loans. Neither a username nor an
+        // arbitrary user id is accepted from the question or request body.
+        bool aboutLoans = ContainsAny(q, "han tra", "sap phai tra", "toi dang muon",
+            "minh dang muon", "sach dang muon", "toi muon nhung", "sach toi muon",
+            "qua han cua toi", "toi qua han", "minh qua han", "chua tra", "muon may cuon",
+            "sap het han", "sach sap tra", "dang muon nhung cuon", "toi dang giu");
+        bool myLoanQuestion = ContainsAny(q, "cua toi", "sach toi", "minh dang", "toi dang",
+            "toi co", "toi con", "toi qua han", "minh qua han", "sach dang muon",
+            "dang muon nhung", "sap het han", "sach sap tra");
+        bool askedAboutBorrowedBooks = question.Contains("mượn", StringComparison.OrdinalIgnoreCase) &&
+            Regex.IsMatch(q, @"\b(toi|minh)\b") &&
+            !ContainsAny(q, "goi y", "muon doc", "muon tim", "tim sach", "sach tuong tu");
+        if (role == "Reader" && ((aboutLoans && myLoanQuestion) || askedAboutBorrowedBooks) &&
+            !ContainsAny(q, "sach nao con", "cuon nao con", "khi nao co sach"))
+        {
+            var lines = new List<string>();
+            await using var cmd = new NpgsqlCommand(@"
+                SELECT b.title, to_char(d.due_at AT TIME ZONE 'Asia/Ho_Chi_Minh','DD/MM/YYYY HH24:MI'),
+                       d.due_at < now(), GREATEST(0,CEIL(EXTRACT(EPOCH FROM now()-d.due_at)/86400))::integer
+                FROM public.borrow_details d
+                JOIN public.borrows br ON br.borrow_id=d.borrow_id
+                JOIN public.book_copies c ON c.copy_id=d.book_copy_id
+                JOIN public.books b ON b.book_id=c.book_id
+                WHERE br.reader_user_id=@id AND d.closed_at IS NULL
+                ORDER BY d.due_at, d.borrow_detail_id LIMIT 30;", db);
+            cmd.Parameters.AddWithValue("id", userId);
+            await using var rd = await cmd.ExecuteReaderAsync(ct);
+            while (await rd.ReadAsync(ct))
+                lines.Add($"• {rd.GetString(0)} — hạn {rd.GetString(1)}" +
+                    (rd.GetBoolean(2) ? $" (quá hạn {rd.GetInt32(3)} ngày)" : ""));
+            return lines.Count == 0 ? "Bạn hiện không có cuốn sách nào đang mượn chưa trả." :
+                $"Bạn đang mượn {lines.Count} cuốn (hiển thị tối đa 30), sắp xếp hạn trả gần nhất trước:\n" +
+                string.Join("\n", lines);
+        }
+        // A Reader asking about other people receives an explicit denial; never
+        // silently show public catalogue results as a misleading answer.
+        bool someoneOverdue = ContainsAny(q, "ai qua han", "nguoi qua han",
+            "doc gia qua han", "qua han lau nhat", "ai tra tre", "nguoi tra tre",
+            "danh sach qua han", "ai muon lau nhat", "nguoi nao qua han",
+            "qua han tra lau nhat", "ai qua han lau nhat", "ai chua tra sach",
+            "bao nhieu nguoi qua han", "bao nhieu nguoi dang qua han",
+            "co bao nhieu doc gia qua han", "qua han nhieu nhat", "doc gia tra tre",
+            "nguoi nao tre tra", "ai tre tra nhieu nhat");
+        if (someoneOverdue && role == "Reader")
+            return "Danh sách độc giả quá hạn chỉ dành cho nhân viên được phân quyền. " +
+                "Bạn có thể hỏi về hạn trả của chính mình.";
+
+        if (someoneOverdue && (role == "Staff" || role == "Admin"))
+        {
+            var lines = new List<string>();
+            await using var cmd = new NpgsqlCommand(@"
+                SELECT rp.reader_code, rp.full_name, COUNT(*)::integer,
+                       MAX(CEIL(EXTRACT(EPOCH FROM now()-d.due_at)/86400))::integer AS max_days
+                FROM public.borrow_details d
+                JOIN public.borrows br ON br.borrow_id=d.borrow_id
+                JOIN public.reader_profiles rp ON rp.user_id=br.reader_user_id
+                WHERE d.closed_at IS NULL AND d.due_at < now()
+                GROUP BY rp.user_id, rp.reader_code, rp.full_name
+                ORDER BY max_days DESC, rp.reader_code LIMIT 20;", db);
+            await using var rd = await cmd.ExecuteReaderAsync(ct);
+            while (await rd.ReadAsync(ct)) lines.Add($"• {rd.GetString(0)} — {rd.GetString(1)}: " +
+                $"{rd.GetInt32(2)} cuốn quá hạn, lâu nhất {rd.GetInt32(3)} ngày");
+            return lines.Count == 0 ? "Hiện không có độc giả nào đang mượn sách quá hạn." :
+                "Danh sách độc giả đang quá hạn (tối đa 20, xếp theo thời gian quá hạn lâu nhất):\n" +
+                string.Join("\n", lines);
+        }
+        if (role == "Admin" && ContainsAny(q, "bao nhieu doc gia", "tong so doc gia",
+            "so luong doc gia", "thong ke doc gia"))
+        {
+            await using var cmd = new NpgsqlCommand("SELECT COUNT(*) FROM public.reader_profiles;", db);
+            long count = (long)(await cmd.ExecuteScalarAsync(ct) ?? 0L);
+            return $"Hiện có {count} hồ sơ độc giả trong hệ thống (bao gồm hồ sơ Guest nếu đã được tạo).";
+        }
+        if ((role == "Staff" || role == "Admin") && ContainsAny(q,
+            "tong dau sach", "bao nhieu dau sach", "tong so dau sach", "thong ke kho"))
+        {
+            await using var cmd = new NpgsqlCommand(@"
+                SELECT (SELECT COUNT(*) FROM public.books WHERE is_visible=TRUE),
+                       (SELECT COUNT(*) FROM public.book_copies WHERE condition_status='active'),
+                       (SELECT COUNT(*) FROM public.book_copies c WHERE condition_status='active'
+                         AND NOT EXISTS (SELECT 1 FROM public.borrow_details d
+                           WHERE d.book_copy_id=c.copy_id AND d.closed_at IS NULL));", db);
+            await using var rd = await cmd.ExecuteReaderAsync(ct);
+            await rd.ReadAsync(ct);
+            return $"Thư viện có {rd.GetInt64(0)} đầu sách đang hiển thị; " +
+                $"{rd.GetInt64(1)} cuốn vật lý trạng thái active; " +
+                $"{rd.GetInt64(2)} cuốn đang sẵn sàng cho mượn.";
+        }
+        if (role == "Admin" && ContainsAny(q,
+            "tien phat chua thu", "phat chua thu", "con no phat", "tong tien phat"))
+        {
+            await using var cmd = new NpgsqlCommand(@"
+                SELECT COALESCE(SUM(GREATEST(0,f.amount-f.waived_amount-
+                  COALESCE((SELECT SUM(p.amount) FROM public.fine_payments p WHERE p.fine_id=f.fine_id),0))),0)
+                FROM public.fines f;", db);
+            decimal amount = (decimal)(await cmd.ExecuteScalarAsync(ct) ?? 0m);
+            return $"Tổng dư nợ tiền phạt chưa thu hiện tại: {amount:N0} VND.";
+        }
+        // Operational questions without a mapped read-only tool must not be
+        // reinterpreted as book recommendations or passed to the text model.
+        if (ContainsAny(q, "luong nhan vien", "bang luong", "cham cong", "ngay cong",
+            "thong tin doc gia", "thong tin user", "thong tin nguoi dung",
+            "so du tai khoan", "doi mat khau"))
+            return "Câu hỏi nghiệp vụ này chưa được chatbot hỗ trợ bằng truy vấn kiểm chứng. " +
+                "Bạn hãy sử dụng trang Nhân sự hoặc Quản lý độc giả/Báo cáo theo quyền hiện có.";
+        return null;
+    }
+
+    private static async Task<string?> NextDueAsync(IConfiguration config, long bookId, CancellationToken ct)
+    {
+        // This read is only for the specific, grounded book id selected from the catalog.
+        var cs = config.GetConnectionString("AivenPostgres")!;
+        await using var db = new NpgsqlConnection(cs);
+        await db.OpenAsync(ct);
+        await using var cmd = new NpgsqlCommand(@"
+            SELECT to_char(MIN(d.due_at) AT TIME ZONE 'Asia/Ho_Chi_Minh', 'DD/MM/YYYY HH24:MI')
+            FROM public.borrow_details d JOIN public.book_copies c ON c.copy_id=d.book_copy_id
+            WHERE c.book_id=@book AND d.closed_at IS NULL;", db);
+        cmd.Parameters.AddWithValue("book", bookId);
+        var value = await cmd.ExecuteScalarAsync(ct);
+        return value is DBNull || value is null ? null : Convert.ToString(value);
     }
 
     private static int Score(BookResult b, string[] terms, bool wantsPopular, bool wantsNew)
@@ -185,7 +410,7 @@ public static class BookAssistantEndpoints
             {
                 model,
                 temperature = 0.2,
-                max_tokens = 450,
+                max_tokens = 220,
                 messages = new object[]
                 {
                     new { role = "system", content = "Bạn là trợ lý thư viện tiếng Việt. Chỉ tư vấn dựa vào DANH MỤC SÁCH được cung cấp. " +

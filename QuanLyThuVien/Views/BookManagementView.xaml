@@ -97,6 +97,53 @@
             </WrapPanel>
         </Border>
 
+        <!-- STEP 83: Reader-only personalized carousel; real DB titles, no invented covers. -->
+        <Border Background="#FFFFFF" BorderBrush="#DDD5ED" BorderThickness="1"
+                CornerRadius="8" Padding="15" Margin="0,0,0,17"
+                Visibility="{Binding IsReader, Converter={StaticResource BoolVisibility}}">
+            <StackPanel>
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="✦  DÀNH CHO BẠN" FontWeight="Bold" FontSize="19" Foreground="#463361"/>
+                    <TextBlock Text="  •  GỢI Ý TỪ LỊCH SỬ ĐỌC" FontSize="11" Foreground="#8A789F" VerticalAlignment="Center"/>
+                </StackPanel>
+                <TextBlock Text="{Binding RecommendationMessage}" Foreground="#655476" FontSize="12"
+                           TextWrapping="Wrap" Margin="0,5,0,10"/>
+                <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled"
+                              CanContentScroll="False">
+                    <ItemsControl ItemsSource="{Binding RecommendedBooks}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <StackPanel Orientation="Horizontal"/>
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Width="181" MinHeight="198" Background="#F7F4FC" BorderBrush="#E0D7EF"
+                                        BorderThickness="1" CornerRadius="6" Margin="0,0,11,8" Padding="10">
+                                    <StackPanel>
+                                        <TextBlock Text="{Binding Title}" FontWeight="Bold" Foreground="#3E3056"
+                                                   FontSize="13" MaxHeight="40" MinHeight="34" TextWrapping="Wrap"/>
+                                        <TextBlock Text="{Binding Authors}" FontSize="11" Foreground="#665779"
+                                                   Margin="0,6,0,0" TextTrimming="CharacterEllipsis"/>
+                                        <TextBlock Text="{Binding Categories}" FontSize="11" Foreground="#866B9E"
+                                                   TextTrimming="CharacterEllipsis" Margin="0,3,0,0"/>
+                                        <TextBlock Text="{Binding Reason}" FontSize="11" Foreground="#4F4264"
+                                                   TextWrapping="Wrap" MaxHeight="43" MinHeight="31" Margin="0,8,0,0"/>
+                                        <TextBlock Text="{Binding Availability}" FontWeight="SemiBold" Foreground="#246B50"
+                                                   FontSize="11" Margin="0,7,0,0"/>
+                                        <Button Content="XEM SÁCH" Height="31" Margin="0,9,0,0"
+                                                Style="{StaticResource PurpleButton}"
+                                                Command="{Binding DataContext.OpenRecommendationCommand, RelativeSource={RelativeSource AncestorType={x:Type UserControl}}}"
+                                                CommandParameter="{Binding}"/>
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+            </StackPanel>
+        </Border>
+
         <Border Background="#EFEAFB" CornerRadius="6" Padding="19" Margin="0,17,0,14">
             <StackPanel>
                 <TextBlock Text="KHÁM PHÁ TỦ SÁCH" FontSize="25" FontWeight="Bold" Foreground="#3D3056"/>
@@ -204,10 +251,59 @@
                             </Grid>
                             <TextBlock Text="MÔ TẢ SÁCH" Foreground="#44345F" FontWeight="Bold" FontSize="15" Margin="0,22,0,7"/>
                             <TextBlock Text="{Binding DetailDescription}" TextWrapping="Wrap" FontSize="13" LineHeight="20" Foreground="#4F4564"/>
+                            <!-- STEP 70: Ratings belong to the existing book detail popup, not a new page. -->
+                            <Expander Margin="0,18,0,0" IsExpanded="False" Background="#F7F5FB">
+                                <Expander.Header>
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="ĐÁNH GIÁ SÁCH" FontSize="14" FontWeight="Bold"
+                                                   Foreground="#44345F" Margin="0,0,12,0" />
+                                        <TextBlock Text="{Binding RatingSummary}" Foreground="#715E89" FontSize="13" />
+                                    </StackPanel>
+                                </Expander.Header>
+                                <StackPanel Margin="14,12,14,14">
+                                    <TextBlock Text="{Binding RatingMessage}" Foreground="#855073"
+                                               TextWrapping="Wrap" Margin="0,0,0,9" />
+                                    <StackPanel Visibility="{Binding CanRateBook, Converter={StaticResource BoolVisibility}}">
+                                        <TextBlock Text="ĐÁNH GIÁ CỦA BẠN" Foreground="#44345F" FontWeight="SemiBold" />
+                                        <StackPanel Orientation="Horizontal" Margin="0,7,0,8">
+                                            <TextBlock Text="Số sao (1–5)" VerticalAlignment="Center" Margin="0,0,10,0" />
+                                            <ComboBox Width="90" Height="30" ItemsSource="{Binding RatingScoreOptions}"
+                                                      SelectedItem="{Binding SelectedRatingScore, Mode=TwoWay}" />
+                                        </StackPanel>
+                                        <TextBox Text="{Binding RatingComment, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                 MinHeight="64" MaxHeight="110" AcceptsReturn="True" MaxLength="1000"
+                                                 VerticalScrollBarVisibility="Auto" TextWrapping="Wrap"
+                                                 Padding="9,7" ToolTip="Nhận xét tối đa 1000 ký tự (không bắt buộc)" />
+                                        <Button Content="LƯU / CẬP NHẬT ĐÁNH GIÁ" Command="{Binding SaveRatingCommand}"
+                                                Background="#69519C" Foreground="White" BorderThickness="0"
+                                                HorizontalAlignment="Left" Padding="15,7" Margin="0,9,0,12" />
+                                    </StackPanel>
+                                    <TextBlock Text="NHẬN XÉT GẦN ĐÂY (ẨN DANH)" FontWeight="SemiBold" Foreground="#44345F"
+                                               Margin="0,4,0,8" />
+                                    <ItemsControl ItemsSource="{Binding RatingComments}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Border BorderBrush="#E5DFEE" BorderThickness="0,0,0,1" Padding="0,6">
+                                                    <StackPanel>
+                                                        <TextBlock Text="{Binding ScoreLabel}" FontWeight="SemiBold"
+                                                                   Foreground="#645184" FontSize="12" />
+                                                        <TextBlock Text="{Binding Comment}" TextWrapping="Wrap"
+                                                                   Foreground="#4F4564" FontSize="13" Margin="0,4,0,0" />
+                                                    </StackPanel>
+                                                </Border>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </StackPanel>
+                            </Expander>
 
                         </StackPanel>
                     </ScrollViewer>
                     <DockPanel Grid.Row="2" Background="#F6F3FA" LastChildFill="False">
+                        <Button Content="⌖  CHỈ ĐƯỜNG ĐẾN KỆ" Command="{Binding RouteToBookCommand}"
+                                Height="34" MinWidth="195" Padding="12,5" Margin="8,8,3,8"
+                                Background="#2563EB" Foreground="White" BorderThickness="0"
+                                DockPanel.Dock="Left"/>
                         <Button Content="ĐÓNG CHI TIẾT" Command="{Binding CloseDetailCommand}" Height="34" Width="160" Margin="0,8,16,8" DockPanel.Dock="Right"/>
                         <!-- Reader sends a REQUEST, not a direct checkout. -->
                         <Button Content="＋  MƯỢN SÁCH / THÊM VÀO ĐƠN" Command="{Binding BorrowBookCommand}" Visibility="{Binding IsReader, Converter={StaticResource BoolVisibility}}" Background="#2C7E68" Foreground="White" BorderThickness="0" Height="34" MinWidth="240" Padding="12,5" Margin="16,8,6,8" DockPanel.Dock="Right"/>

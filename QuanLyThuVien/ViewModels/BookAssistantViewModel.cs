@@ -19,7 +19,7 @@ namespace QuanLyThuVien.ViewModels
         private readonly string _token;
         private readonly BookAssistantApiClient _api = new BookAssistantApiClient();
         private string _question = "";
-        private string _status = "Đặt câu hỏi về sách trong thư viện.";
+        private string _status = "Hỏi về sách, hạn trả hoặc nghiệp vụ theo quyền tài khoản.";
         private bool _busy;
         private BookAssistantSuggestion _selectedBook;
 
@@ -38,7 +38,7 @@ namespace QuanLyThuVien.ViewModels
             Messages.Add(new BookAssistantMessage
             {
                 Speaker = "TRỢ LÝ THƯ VIỆN",
-                Body = "Bạn muốn đọc sách về chủ đề nào? Mình có thể gợi ý theo tên, tác giả, thể loại hoặc lượt mượn gần đây."
+                Body = "Bạn có thể hỏi về sách, tình trạng kho và hạn trả của mình. Staff/Admin có thể hỏi thêm thống kê nghiệp vụ theo quyền."
             });
         }
 
@@ -75,7 +75,7 @@ namespace QuanLyThuVien.ViewModels
             Messages.Add(new BookAssistantMessage { Speaker = "BẠN", Body = question });
             Question = "";
             Busy = true;
-            Status = "Đang tra cứu sách trong kho...";
+            Status = "Đang tra cứu dữ liệu thư viện...";
             try
             {
                 var result = await _api.AskAsync(_token, question);
@@ -150,7 +150,7 @@ namespace QuanLyThuVien.ViewModels
     internal sealed class BookAssistantApiClient
     {
         private const string Url = "http://127.0.0.1:5082/api/reader/book-assistant/chat";
-        private static readonly HttpClient Client = new HttpClient { Timeout = TimeSpan.FromSeconds(35) };
+        private static readonly HttpClient Client = new HttpClient { Timeout = TimeSpan.FromSeconds(60) };
         public async Task<BookAssistantResult> AskAsync(string token, string question)
         {
             try
@@ -170,7 +170,7 @@ namespace QuanLyThuVien.ViewModels
                                 string info = reply.StatusCode == HttpStatusCode.Unauthorized
                                     ? "Phiên đăng nhập hết hạn. Hãy đăng nhập lại."
                                     : reply.StatusCode == HttpStatusCode.Forbidden
-                                    ? "Trợ lý sách chỉ dành cho tài khoản Reader."
+                                    ? "Tài khoản không được phép sử dụng trợ lý."
                                     : reply.StatusCode == HttpStatusCode.NotFound
                                     ? "Backend chưa đăng ký API Chatbot (bước 82)."
                                     : "Không tải được gợi ý từ API (HTTP " + (int)reply.StatusCode + ").";
