@@ -63,6 +63,20 @@ namespace QuanLyThuVien.ViewModels
             set { Set(ref _selectedBook, value); }
         }
 
+        // UI-side guard complements backend; never show recommendations beside
+        // personal loans, due dates, fines or administrative answers.
+        private static bool IsBookDiscoveryQuestion(string question)
+        {
+            string q = (question ?? "").ToLowerInvariant();
+            if (q.Contains("đang mượn") || q.Contains("hạn trả") ||
+                q.Contains("hết hạn") || q.Contains("quá hạn") ||
+                q.Contains("tiền phạt") || q.Contains("lịch sử mượn") ||
+                q.Contains("chấm công") || q.Contains("bảng lương") ||
+                q.Contains("độc giả") || q.Contains("nhân viên"))
+                return false;
+            return true; // Backend is the authority on whether suggestions exist.
+        }
+
         public async Task AskAsync()
         {
             if (Busy) return;
@@ -72,6 +86,9 @@ namespace QuanLyThuVien.ViewModels
                 Status = "Câu hỏi cần từ 2 đến 400 ký tự.";
                 return;
             }
+            // Hide stale suggestions immediately, including while the request runs.
+            Suggestions.Clear();
+            SelectedBook = null;
             Messages.Add(new BookAssistantMessage { Speaker = "BẠN", Body = question });
             Question = "";
             Busy = true;
@@ -92,7 +109,7 @@ namespace QuanLyThuVien.ViewModels
                     Body = response.Reply ?? "Không có nội dung trả lời."
                 });
                 Suggestions.Clear();
-                if (response.Suggestions != null)
+                if (response.Suggestions != null && IsBookDiscoveryQuestion(question))
                     foreach (var book in response.Suggestions) Suggestions.Add(book);
                 SelectedBook = Suggestions.Count > 0 ? Suggestions[0] : null;
                 Status = response.Note ?? "Đã tra cứu xong.";

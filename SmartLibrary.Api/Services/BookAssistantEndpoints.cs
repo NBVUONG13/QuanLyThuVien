@@ -90,6 +90,31 @@ public static class BookAssistantEndpoints
                             reader.GetInt32(6), reader.GetInt32(7)));
                 }
 
+                // Only show book recommendations for book-discovery questions.
+                // Other questions must not silently turn into random titles.
+                string normalizedIntent = Normalize(question);
+                bool discoveryIntent = ContainsAny(normalizedIntent,
+                    "sach", "truyen", "tac gia", "the loai", "goi y", "tu van",
+                    "nen doc", "muon doc", "muon hoc", "tim hieu", "gioi thieu",
+                    "lap trinh", "thuat toan", "van hoc", "trinh tham", "kinh di",
+                    "thieu nhi", "khoa hoc", "lich su", "tam ly", "tieu thuyet",
+                    "co sach", "tac pham") ||
+                    catalog.Any(b => !string.IsNullOrWhiteSpace(b.Title) &&
+                        normalizedIntent.Contains(Normalize(b.Title), StringComparison.Ordinal));
+                if (!discoveryIntent)
+                {
+                    string help = ContainsAny(normalizedIntent, "gia han", "doi han")
+                        ? "Để xin gia hạn, hãy vào Mượn & gia hạn → Gia hạn, chọn cuốn đang mượn và gửi yêu cầu chờ nhân viên duyệt."
+                        : "Mình hỗ trợ tra cứu sách, gợi ý sách và thông tin mượn/trả theo quyền. Bạn thử hỏi rõ hơn về sách, hạn trả hoặc nghiệp vụ cần xem nhé.";
+                    return Results.Ok(new
+                    {
+                        reply = help,
+                        aiUsed = false,
+                        note = "Câu hỏi chưa có truy vấn xác thực phù hợp; không tự gợi ý sách.",
+                        suggestions = Array.Empty<object>()
+                    });
+                }
+
                 var terms = Regex.Split(Normalize(question), @"[^\p{L}\p{N}]+")
                     .Where(s => s.Length >= 2 && !StopWords.Contains(s))
                     .Distinct(StringComparer.OrdinalIgnoreCase).Take(8).ToArray();
@@ -227,22 +252,34 @@ public static class BookAssistantEndpoints
                 "Phí quá hạn chưa được hệ thống lập phiếu có thể chưa tính vào số này.";
         }
 
-        // Reader can only query their own issued loans. Neither a username nor an
-        // arbitrary user id is accepted from the question or request body.
-        bool aboutLoans = ContainsAny(q, "han tra", "sap phai tra", "toi dang muon",
-            "minh dang muon", "sach dang muon", "toi muon nhung", "sach toi muon",
-            "qua han cua toi", "toi qua han", "minh qua han", "chua tra", "muon may cuon",
-            "sap het han", "sach sap tra", "dang muon nhung cuon", "toi dang giu");
-        bool myLoanQuestion = ContainsAny(q, "cua toi", "sach toi", "minh dang", "toi dang",
-            "toi co", "toi con", "toi qua han", "minh qua han", "sach dang muon",
-            "dang muon nhung", "sap het han", "sach sap tra");
-        bool askedAboutBorrowedBooks = question.Contains("mượn", StringComparison.OrdinalIgnoreCase) &&
-            Regex.IsMatch(q, @"\b(toi|minh)\b") &&
-            !ContainsAny(q, "goi y", "muon doc", "muon tim", "tim sach", "sach tuong tu");
-        if (role == "Reader" && ((aboutLoans && myLoanQuestion) || askedAboutBorrowedBooks) &&
-            !ContainsAny(q, "sach nao con", "cuon nao con", "khi nao co sach"))
+        // Renewal is an action requiring Staff approval, not a book recommendation.
+        if (ContainsAny(q, "gia han", "xin gia han", "doi han"))
+            return "Để xin gia hạn, vào Mượn & gia hạn → Gia hạn, chọn cuốn đã nhận " +
+                "rồi gửi yêu cầu. Gia hạn chỉ có hiệu lực sau khi Staff/Admin duyệt. " +
+                "Trạng thái đơn gia hạn có thể xem ngay trong tab đó.";
+
+        // Reader's *own* active loans: understand conversational Vietnamese (including
+        // short forms: "t đang mượn quyển nào, bao giờ hết hạn?"). Never ask for an
+        // arbitrary user ID; the session is the sole identity source.
+        bool personalLoanIntent = ContainsAny(q,
+            "dang muon", "dang giu", "muon quyen nao", "muon cuon nao",
+            "muon sach nao", "dang muon nhung", "sach toi muon", "sach minh muon",
+            "toi muon may cuon", "toi co muon", "minh co muon", "toi con muon",
+            "bao gio het han", "bao gio phai tra", "khi nao phai tra", "bao gio tra sach",
+            "han tra cua toi", "han tra cua minh", "han tra gan nhat cua toi",
+            "tra khi nao", "sap phai tra", "sap het han", "sap den han",
+            "sach sap tra", "cuon nao sap tra", "den han tra", "ngay tra cua toi",
+            "toi qua han", "minh qua han", "qua han cua toi", "toi co qua han",
+            "sach chua tra", "chua tra cuon nao", "so sach dang muon");
+        // "Tôi muốn mượn sách ..." is a request, not an issued loan.
+        bool seekingBooks = ContainsAny(q, "muon muon sach", "muon muon cuon", "muon doc",
+            "muon tim sach", "goi y sach", "sach tuong tu", "dat muon sach");
+        if (role == "Reader" && personalLoanIntent && !seekingBooks)
         {
             var lines = new List<string>();
+            string? earliestBook = null;
+            string? earliestDue = null;
+            bool earliestOverdue = false;
             await using var cmd = new NpgsqlCommand(@"
                 SELECT b.title, to_char(d.due_at AT TIME ZONE 'Asia/Ho_Chi_Minh','DD/MM/YYYY HH24:MI'),
                        d.due_at < now(), GREATEST(0,CEIL(EXTRACT(EPOCH FROM now()-d.due_at)/86400))::integer
@@ -255,11 +292,23 @@ public static class BookAssistantEndpoints
             cmd.Parameters.AddWithValue("id", userId);
             await using var rd = await cmd.ExecuteReaderAsync(ct);
             while (await rd.ReadAsync(ct))
-                lines.Add($"• {rd.GetString(0)} — hạn {rd.GetString(1)}" +
-                    (rd.GetBoolean(2) ? $" (quá hạn {rd.GetInt32(3)} ngày)" : ""));
-            return lines.Count == 0 ? "Bạn hiện không có cuốn sách nào đang mượn chưa trả." :
-                $"Bạn đang mượn {lines.Count} cuốn (hiển thị tối đa 30), sắp xếp hạn trả gần nhất trước:\n" +
-                string.Join("\n", lines);
+            {
+                string title = rd.GetString(0), due = rd.GetString(1);
+                bool overdue = rd.GetBoolean(2);
+                if (earliestBook is null)
+                {
+                    earliestBook = title;
+                    earliestDue = due;
+                    earliestOverdue = overdue;
+                }
+                lines.Add($"• {title} — hạn trả {due}" +
+                    (overdue ? $" (quá hạn {rd.GetInt32(3)} ngày)" : ""));
+            }
+            if (lines.Count == 0) return "Hiện bạn không có cuốn sách nào đang mượn chưa trả.";
+            return $"Bạn đang mượn {lines.Count} cuốn (hiển thị tối đa 30):\n" +
+                string.Join("\n", lines) + "\n" +
+                (earliestOverdue ? "Cuốn quá hạn lâu nhất: " : "Cuốn có hạn trả gần nhất: ") +
+                earliestBook + " — " + earliestDue + ".";
         }
         // A Reader asking about other people receives an explicit denial; never
         // silently show public catalogue results as a misleading answer.

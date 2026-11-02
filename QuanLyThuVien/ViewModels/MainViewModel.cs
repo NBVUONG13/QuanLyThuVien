@@ -242,7 +242,8 @@ namespace QuanLyThuVien.ViewModels
             await Dashboard.LoadAsync();
         }
 
-        // Floating chat: toggle without navigating away from the page being viewed.
+        // Floating chat: the XAML shows EITHER the round AI launcher OR the panel.
+        // The current page and chat history remain intact when toggling.
         private Task NavigateAssistantAsync()
         {
             if (!IsAuthenticated || AssistantPage == null) return Task.CompletedTask;
