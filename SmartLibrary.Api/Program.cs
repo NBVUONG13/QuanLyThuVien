@@ -23,6 +23,10 @@ builder.Services.AddSingleton<SessionService>();
 builder.Services.AddSingleton<ReaderProfileEditOtpStore>();
 // STEP 76: automatic Reader tier promotion/demotion, no Admin action.
 builder.Services.AddHostedService<ReaderTierAutoHostedService>();
+// Step 84+: Automatic embedding in background. Existing documents, API book edits and SQL imports.
+// Does not block save requests or require manual PowerShell reindex.
+builder.Services.AddSingleton<BookEmbeddingAutoIndexer>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<BookEmbeddingAutoIndexer>());
 
 var app = builder.Build();
 
@@ -43,6 +47,12 @@ app.MapLibraryReportsEndpoints();
 app.MapBookAssistantEndpoints();
 // Step 83: Goi y sach ca nhan hoa tren Trang chu cho Reader.
 app.MapPersonalizedRecommendationEndpoints();
+// STEP 84: POST /api/admin/semantic-books/reindex (Admin); GET /api/library/semantic-books/search (Reader/Staff/Admin).
+// Uses the existing SemanticBookEndpoints.cs; no new database/table or WPF file needed for the API.
+app.MapSemanticBookEndpoints();
+// STEP 85: POST /api/notifications/sync-due (Reader); WPF auto-syncs on login and every 2 minutes while open.
+// Uses the existing LoanDueReminderEndpoints.cs; prevents duplicate reminder events for a loan and due date.
+app.MapLoanDueReminderEndpoints();
 
 // Explicit one-time CLI path. Never expose bootstrap as HTTP.
 if (args.Contains("--bootstrap-admin", StringComparer.Ordinal))

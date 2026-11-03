@@ -122,18 +122,18 @@ public static class BookInventoryEndpoints
         });
 
         app.MapPost("/api/inventory/books", async (BookEditRequest body, HttpRequest req,
-            SessionService sessions, IConfiguration config, CancellationToken ct) =>
+            SessionService sessions, IConfiguration config, BookEmbeddingAutoIndexer autoEmbeddings, CancellationToken ct) =>
         {
             var denied = Guard(app, req, sessions);
             if (denied is not null) return denied;
-            return await SaveBook(app, body, null, req, sessions, config, ct);
+            return await SaveBook(app, body, null, req, sessions, config, autoEmbeddings, ct);
         });
         app.MapPut("/api/inventory/books/{bookId:long}", async (long bookId, BookEditRequest body,
-            HttpRequest req, SessionService sessions, IConfiguration config, CancellationToken ct) =>
+            HttpRequest req, SessionService sessions, IConfiguration config, BookEmbeddingAutoIndexer autoEmbeddings, CancellationToken ct) =>
         {
             var denied = Guard(app, req, sessions);
             if (denied is not null) return denied;
-            return await SaveBook(app, body, bookId, req, sessions, config, ct);
+            return await SaveBook(app, body, bookId, req, sessions, config, autoEmbeddings, ct);
         });
 
         // Server-generated unique copy codes; never change a physical quantity counter by hand.
@@ -376,7 +376,7 @@ public static class BookInventoryEndpoints
     }
 
     private static async Task<IResult> SaveBook(WebApplication app, BookEditRequest body, long? bookId,
-        HttpRequest req, SessionService sessions, IConfiguration config, CancellationToken ct)
+        HttpRequest req, SessionService sessions, IConfiguration config, BookEmbeddingAutoIndexer autoEmbeddings, CancellationToken ct)
     {
         string title = (body.Title ?? "").Trim(), isbn = (body.Isbn ?? "").Trim(),
                description = (body.Description ?? "").Trim();
@@ -439,6 +439,9 @@ public static class BookInventoryEndpoints
                 bookId.HasValue ? "book_updated" : "book_created", "books", id.ToString(),
                 new { title, isbn, body.IsVisible, body.PublisherId, body.AuthorIds, body.CategoryIds }, ct);
             await tx.CommitAsync(ct);
+            // The transaction is committed first. Enqueue a non-blocking background scan;
+            // a failed/offline embedding model never rolls back the saved book.
+            autoEmbeddings.RequestScan();
             return Results.Ok(new { message = bookId.HasValue ? "Đã lưu thông tin đầu sách." : "Đã tạo đầu sách mới.", bookId = id });
         }
         catch (PostgresException e) when (e.SqlState == PostgresErrorCodes.UniqueViolation)
