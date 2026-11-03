@@ -20,6 +20,10 @@ namespace QuanLyThuVien.Services
         [DataMember(Name = "categories")] public string Categories { get; set; }
         [DataMember(Name = "publicationYear")] public int PublicationYear { get; set; }
         [DataMember(Name = "physicalCopies")] public long PhysicalCopies { get; set; }
+        [DataMember(Name = "coverUrl")] public string CoverUrl { get; set; }
+        // Physical copies are read from book_copies. Zero is not a demo inventory.
+        public string StockStatus => PhysicalCopies > 0
+            ? "Bản vật lý: " + PhysicalCopies : "Chưa nhập bản vật lý";
     }
 
     [DataContract]

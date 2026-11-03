@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using System.Windows.Input;
 using System.Windows;
 using System.Windows.Media;
+using System.Windows.Threading;
 using QuanLyThuVien.Services;
 
 namespace QuanLyThuVien.ViewModels
@@ -17,6 +18,7 @@ namespace QuanLyThuVien.ViewModels
         private long _unreadCount;
         private LibraryNotification _selected;
         private bool _loading;
+        private DispatcherTimer _refreshTimer;
         public event Action<long> UnreadCountChanged;
 
         public NotificationCenterViewModel(string token)
@@ -53,6 +55,34 @@ namespace QuanLyThuVien.ViewModels
         public ICommand LoadCommand { get; }
         public ICommand MarkReadCommand { get; }
         public ICommand MarkAllReadCommand { get; }
+        // Refresh on a timer while the Reader's main window is open.
+        // UI dispatcher timer: never creates background workers or extra threads.
+        public void StartAutoRefresh()
+        {
+            if (_refreshTimer != null) return;
+            _refreshTimer = new DispatcherTimer(DispatcherPriority.Background)
+            {
+                Interval = TimeSpan.FromMinutes(2)
+            };
+            _refreshTimer.Tick += RefreshTimer_Tick;
+            _refreshTimer.Start();
+        }
+
+        public void StopAutoRefresh()
+        {
+            if (_refreshTimer == null) return;
+            _refreshTimer.Stop();
+            _refreshTimer.Tick -= RefreshTimer_Tick;
+            _refreshTimer = null;
+        }
+
+        private async void RefreshTimer_Tick(object sender, EventArgs args)
+        {
+            if (_loading) return;
+            try { await LoadAsync(); }
+            catch (Exception) { Message = "Làm mới thông báo thất bại. Sẽ thử lại sau."; }
+        }
+
         private void RefreshCommands()
         {
             (MarkReadCommand as AsyncCommand)?.Refresh();
@@ -65,13 +95,18 @@ namespace QuanLyThuVien.ViewModels
             RefreshCommands();
             try
             {
+                // Sync first: only the server may create due reminders for this Reader.
+                // Even if sync fails, load existing notifications and keep the bell usable.
+                var sync = await _api.SyncDueRemindersAsync(_token);
                 var result = await _api.GetNotificationsAsync(_token);
                 if (!result.IsSuccess) { Message = result.Message; return; }
                 Items.Clear();
                 foreach (var n in result.Notifications) Items.Add(n);
                 Selected = null;
                 UnreadCount = result.UnreadCount;
-                Message = Items.Count == 0 ? "Bạn chưa có thông báo nào."
+                Message = !sync.IsSuccess
+                    ? "Đã tải thông báo. Chưa kiểm tra được hạn trả mới (kiểm tra API bước 85)."
+                    : Items.Count == 0 ? "Bạn chưa có thông báo nào."
                     : "Hiển thị " + Items.Count + " thông báo gần nhất (tối đa 100).";
             }
             finally { _loading = false; RefreshCommands(); }

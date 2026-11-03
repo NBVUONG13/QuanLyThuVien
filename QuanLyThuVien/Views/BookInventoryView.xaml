@@ -125,7 +125,9 @@
                                     </StackPanel>
                                     <Button Content="NHẬP CUỐN VÀO KHO" Style="{StaticResource PurpleButton}" Command="{Binding ReceiveStockCommand}" Height="34" Width="175" Margin="0,18,0,0"/>
                                 </WrapPanel>
-                                <TextBlock Text="Mỗi cuốn nhập sẽ có một mã vật lý riêng. Tổng số lượng tự tính theo danh sách bản sao." Foreground="#7D718B" TextWrapping="Wrap" FontWeight="Normal" Margin="0,0,0,12"/>
+                                <TextBlock Text="Chỉ nhập những cuốn đã có thật và đã kiểm kê. Chọn đầu sách phía trên, nhập số cuốn thực tế và vị trí kệ; hệ thống sẽ cấp mã cuốn riêng. Không tạo tồn kho demo."
+                                           Foreground="#785279" TextWrapping="Wrap" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                                <TextBlock Text="Nếu chưa có bản vật lý, giữ số cuốn bằng 0. Đầu sách vẫn hiển thị trên trang chủ và trang tìm kiếm cùng ảnh bìa thật." Foreground="#7D718B" TextWrapping="Wrap" FontWeight="Normal" Margin="0,0,0,12"/>
                                 <DataGrid ItemsSource="{Binding StockCopies}" SelectedItem="{Binding SelectedStockCopy, Mode=TwoWay}" IsReadOnly="True" AutoGenerateColumns="False" CanUserAddRows="False" Height="215" CanUserDeleteRows="False" SelectionMode="Single" ScrollViewer.HorizontalScrollBarVisibility="Auto">
                                     <DataGrid.Columns>
                                         <DataGridTextColumn Header="Mã cuốn" Binding="{Binding CopyCode}" Width="125"/>

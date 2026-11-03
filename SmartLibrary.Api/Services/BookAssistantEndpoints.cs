@@ -90,22 +90,25 @@ public static class BookAssistantEndpoints
                             reader.GetInt32(6), reader.GetInt32(7)));
                 }
 
-                // Only show book recommendations for book-discovery questions.
-                // Other questions must not silently turn into random titles.
+                // Business facts take priority over discovery, even when the question
+                // contains the generic word "sách". A catalog-only prompt cannot answer
+                // who is currently borrowing or when this Reader must return books.
                 string normalizedIntent = Normalize(question);
-                bool discoveryIntent = ContainsAny(normalizedIntent,
-                    "sach", "truyen", "tac gia", "the loai", "goi y", "tu van",
-                    "nen doc", "muon doc", "muon hoc", "tim hieu", "gioi thieu",
-                    "lap trinh", "thuat toan", "van hoc", "trinh tham", "kinh di",
-                    "thieu nhi", "khoa hoc", "lich su", "tam ly", "tieu thuyet",
-                    "co sach", "tac pham") ||
-                    catalog.Any(b => !string.IsNullOrWhiteSpace(b.Title) &&
-                        normalizedIntent.Contains(Normalize(b.Title), StringComparison.Ordinal));
+                bool stockIntentBeforeCatalog = IsBookStockIntent(normalizedIntent);
+                bool discoveryIntent = stockIntentBeforeCatalog || IsDiscoveryIntent(normalizedIntent) ||
+                    (!IsOperationalIntent(normalizedIntent) &&
+                     catalog.Any(b => !string.IsNullOrWhiteSpace(b.Title) &&
+                        normalizedIntent.Contains(Normalize(b.Title), StringComparison.Ordinal)));
+                if (IsOperationalIntent(normalizedIntent) && !IsExplicitRecommendationIntent(normalizedIntent)
+                    && !stockIntentBeforeCatalog)
+                    discoveryIntent = false;
                 if (!discoveryIntent)
                 {
                     string help = ContainsAny(normalizedIntent, "gia han", "doi han")
                         ? "Để xin gia hạn, hãy vào Mượn & gia hạn → Gia hạn, chọn cuốn đang mượn và gửi yêu cầu chờ nhân viên duyệt."
-                        : "Mình hỗ trợ tra cứu sách, gợi ý sách và thông tin mượn/trả theo quyền. Bạn thử hỏi rõ hơn về sách, hạn trả hoặc nghiệp vụ cần xem nhé.";
+                        : IsOperationalIntent(normalizedIntent)
+                            ? "Câu hỏi này chưa được hỗ trợ bằng truy vấn dữ liệu xác thực. Mình không thể tự suy đoán từ danh mục sách. Hãy thử hỏi 'Tôi đang mượn những cuốn nào, hạn trả khi nào?' hoặc 'Tôi còn nợ tiền phạt không?'."
+                            : "Mình hỗ trợ tra cứu sách, gợi ý sách và thông tin mượn/trả theo quyền. Bạn thử hỏi rõ hơn về sách hoặc nghiệp vụ cần xem nhé.";
                     return Results.Ok(new
                     {
                         reply = help,
@@ -115,14 +118,39 @@ public static class BookAssistantEndpoints
                     });
                 }
 
-                var terms = Regex.Split(Normalize(question), @"[^\p{L}\p{N}]+")
+                // Semantic search is an OPTIONAL supplement to the existing keyword ranking.
+                // It is never used for personal loans, fines or book-stock facts.
+                string normalizedQuestion = Normalize(question);
+                bool stockIntent = IsBookStockIntent(normalizedQuestion);
+                bool similarIntent = ContainsAny(normalizedQuestion, "sach giong", "sach tuong tu",
+                    "truyen giong", "truyen tuong tu", "giong cuon", "tuong tu cuon");
+                BookResult? sourceBook = similarIntent ? catalog
+                    .Where(b => !string.IsNullOrWhiteSpace(b.Title) &&
+                        normalizedQuestion.Contains(Normalize(b.Title), StringComparison.Ordinal))
+                    .OrderByDescending(b => b.Title.Length).FirstOrDefault() : null;
+                string semanticQuery = sourceBook is null ? question :
+                    "Sách có nội dung, chủ đề, thể loại tương tự: " + sourceBook.Title + ". " +
+                    sourceBook.Category + ". " + sourceBook.Description;
+                IReadOnlyList<SemanticBookEndpoints.SemanticMatch>? semantic = stockIntent ? null :
+                    await SemanticBookEndpoints.TrySearchAsync(config, semanticQuery, 15, ct);
+                var semanticScores = semantic?.ToDictionary(x => x.BookId, x => x.Similarity) ??
+                    new Dictionary<long, double>();
+
+                var terms = Regex.Split(normalizedQuestion, @"[^\p{L}\p{N}]+")
                     .Where(s => s.Length >= 2 && !StopWords.Contains(s))
                     .Distinct(StringComparer.OrdinalIgnoreCase).Take(8).ToArray();
                 bool wantsPopular = new[] { "hot", "trend", "pho bien", "muon nhieu", "noi bat" }
                     .Any(t => Normalize(question).Contains(t, StringComparison.Ordinal));
                 bool wantsNew = new[] { "moi", "gan day", "xuat ban" }
                     .Any(t => Normalize(question).Contains(t, StringComparison.Ordinal));
-                var ranked = catalog.Select(b => new { Book = b, Score = Score(b, terms, wantsPopular, wantsNew) })
+                var ranked = catalog
+                    .Where(b => sourceBook is null || b.BookId != sourceBook.BookId)
+                    .Select(b => new
+                    {
+                        Book = b,
+                        Score = Score(b, terms, wantsPopular, wantsNew) +
+                            (semanticScores.TryGetValue(b.BookId, out var score) ? score * 18 : 0)
+                    })
                     .OrderByDescending(x => x.Score).ThenByDescending(x => x.Book.RecentBorrows)
                     .ThenByDescending(x => x.Book.PublicationYear).ToList();
                 bool matches = ranked.Any(x => x.Score > 0);
@@ -130,10 +158,6 @@ public static class BookAssistantEndpoints
                     .Select(x => x.Book).ToList();
                 // Book availability questions must use an exact grounded book title.
                 // Never guess from a partial/fuzzy match and claim an exact quantity.
-                string normalizedQuestion = Normalize(question);
-                bool stockIntent = ContainsAny(normalizedQuestion, "con sach", "con khong", "con may", "bao nhieu cuon",
-                    "bao nhieu quyen", "con bao nhieu", "khi nao co", "bao gio co",
-                    "han tra gan nhat", "ngay tra gan nhat", "ngay tra sap toi", "het sach");
                 if (stockIntent)
                 {
                     var exact = catalog.Where(b => !string.IsNullOrWhiteSpace(b.Title) &&
@@ -186,8 +210,10 @@ public static class BookAssistantEndpoints
                 {
                     reply = aiUsed ? answer : fallback,
                     aiUsed,
-                    note = aiUsed ? "Trả lời bởi LM Studio, dữ liệu sách từ thư viện." :
-                        "LM Studio chưa sẵn sàng; đây là kết quả tra cứu trực tiếp trong thư viện, không phải câu trả lời AI.",
+                    note = (semanticScores.Count > 0 ? "Đã dùng embedding tìm sách tương tự. " :
+                            "Đang dùng xếp hạng từ khóa/danh mục. ") +
+                        (aiUsed ? "Phần tư vấn do LM Studio diễn giải từ dữ liệu sách." :
+                            "Không có câu trả lời từ model chat; kết quả từ dữ liệu thư viện."),
                     suggestions = list
                 });
             }
@@ -201,6 +227,61 @@ public static class BookAssistantEndpoints
             }
         });
     }
+
+    // Normalize() strips Vietnamese diacritics, then match colloquial expressions.
+    // Keep this read-only routing independent of the local LLM's interpretation.
+    private static bool IsExplicitRecommendationIntent(string q) => ContainsAny(q,
+        "goi y", "tu van sach", "nen doc", "sach tuong tu", "sach giong",
+        "tim sach", "sach nao hay", "truyen nao hay", "muon doc", "muon hoc",
+        "sach de hoc", "sach ve", "truyen ve", "the loai", "tac gia",
+        "gioi thieu sach", "co sach nao", "tim giup sach");
+
+    private static bool IsPersonalLoanIntent(string q)
+    {
+        // Important: do not mistake "tôi muốn đọc sách" for an issued loan.
+        if (ContainsAny(q, "muon doc", "muon hoc", "muon tim sach", "muon muon sach",
+            "goi y sach", "dat muon sach", "sach tuong tu", "sach giong")) return false;
+        return ContainsAny(q,
+            "dang muon", "dang giu", "dang thue", "chua tra", "da nhan sach",
+            "muon quyen nao", "muon nhung quyen", "muon nhung cuon", "muon cuon nao",
+            "muon sach nao", "muon sach gi", "muon may cuon", "muon bao nhieu cuon",
+            "sach toi muon", "sach minh muon", "t muon cuon nao", "toi muon may cuon",
+            "toi co muon", "minh co muon", "toi con muon", "toi da nhan cuon nao",
+            "bao gio het han", "bao gio phai tra", "khi nao phai tra", "bao gio tra sach",
+            "het han khi nao", "ngay het han", "han tra cua toi", "han tra cua minh",
+            "ngay tra cua toi", "ngay tra cua minh", "tra khi nao",
+            "sap phai tra", "sap het han", "sap den han", "sach sap tra",
+            "cuon nao sap tra", "den han tra", "toi qua han", "minh qua han",
+            "qua han cua toi", "toi co qua han", "sach chua tra", "so sach dang muon",
+            "nhung cuon nao toi dang co", "may quyen toi dang co") ||
+            (ContainsAny(q, "toi", "minh", "t dang", "t co", "cua t") &&
+             ContainsAny(q, "han tra", "ngay tra", "het han", "sap phai tra"));
+    }
+
+    private static bool IsBookStockIntent(string q) => ContainsAny(q,
+        "con sach", "con khong", "con may", "bao nhieu cuon", "bao nhieu quyen",
+        "con bao nhieu", "khi nao co", "bao gio co", "het sach",
+        "sach co san", "co san khong", "du sach", "con cuon nao") ||
+        (ContainsAny(q, "han tra gan nhat", "ngay tra gan nhat", "ngay tra sap toi") &&
+         !ContainsAny(q, "cua toi", "cua minh", "toi dang", "minh dang", "t dang"));
+
+    private static bool IsOperationalIntent(string q)
+    {
+        if (IsPersonalLoanIntent(q)) return true;
+        return ContainsAny(q,
+            "qua han", "tre han", "no phat", "tien phat", "nop phat",
+            "lich su muon", "lich su tra", "don muon", "don da dat",
+            "gia han", "xin gia han", "cham cong", "bang luong",
+            "nhan vien", "doc gia", "nguoi dung", "tai khoan",
+            "thong bao", "ngay cong", "tinh luong", "sach con bao nhieu",
+            "sach da muon", "sach chua tra", "sach dang muon");
+    }
+
+    private static bool IsDiscoveryIntent(string q) =>
+        IsExplicitRecommendationIntent(q) || ContainsAny(q,
+            "trinh tham", "ngon tinh", "lap trinh", "thuat toan",
+            "khoa hoc", "kinh di", "van hoc", "thieu nhi", "tieu thuyet",
+            "tam ly hoc", "sach moi", "sach hot", "tim tac pham");
 
     private static bool ContainsAny(string text, params string[] options) =>
         options.Any(x => text.Contains(x, StringComparison.Ordinal));
@@ -261,16 +342,7 @@ public static class BookAssistantEndpoints
         // Reader's *own* active loans: understand conversational Vietnamese (including
         // short forms: "t đang mượn quyển nào, bao giờ hết hạn?"). Never ask for an
         // arbitrary user ID; the session is the sole identity source.
-        bool personalLoanIntent = ContainsAny(q,
-            "dang muon", "dang giu", "muon quyen nao", "muon cuon nao",
-            "muon sach nao", "dang muon nhung", "sach toi muon", "sach minh muon",
-            "toi muon may cuon", "toi co muon", "minh co muon", "toi con muon",
-            "bao gio het han", "bao gio phai tra", "khi nao phai tra", "bao gio tra sach",
-            "han tra cua toi", "han tra cua minh", "han tra gan nhat cua toi",
-            "tra khi nao", "sap phai tra", "sap het han", "sap den han",
-            "sach sap tra", "cuon nao sap tra", "den han tra", "ngay tra cua toi",
-            "toi qua han", "minh qua han", "qua han cua toi", "toi co qua han",
-            "sach chua tra", "chua tra cuon nao", "so sach dang muon");
+        bool personalLoanIntent = IsPersonalLoanIntent(q);
         // "Tôi muốn mượn sách ..." is a request, not an issued loan.
         bool seekingBooks = ContainsAny(q, "muon muon sach", "muon muon cuon", "muon doc",
             "muon tim sach", "goi y sach", "sach tuong tu", "dat muon sach");
@@ -310,6 +382,11 @@ public static class BookAssistantEndpoints
                 (earliestOverdue ? "Cuốn quá hạn lâu nhất: " : "Cuốn có hạn trả gần nhất: ") +
                 earliestBook + " — " + earliestDue + ".";
         }
+        // Staff/Admin may not silently interpret "my loans" as a catalog query.
+        if (role != "Reader" && personalLoanIntent && !seekingBooks)
+            return "Truy vấn sách cá nhân này hiện dành cho tài khoản Reader. " +
+                "Với tài khoản nhân viên, hãy sử dụng chức năng Mượn & trả để kiểm tra theo nghiệp vụ.";
+
         // A Reader asking about other people receives an explicit denial; never
         // silently show public catalogue results as a misleading answer.
         bool someoneOverdue = ContainsAny(q, "ai qua han", "nguoi qua han",
@@ -447,7 +524,15 @@ public static class BookAssistantEndpoints
                 using var modelJson = JsonDocument.Parse(await modelsResponse.Content.ReadAsStringAsync(ct));
                 if (!modelJson.RootElement.TryGetProperty("data", out var data) ||
                     data.ValueKind != JsonValueKind.Array || data.GetArrayLength() == 0) return null;
-                model = data[0].GetProperty("id").GetString();
+                // Do not accidentally send a CHAT completion to the embedding model
+                // when several models are present in LM Studio.
+                model = data.EnumerateArray()
+                    .Select(x => x.TryGetProperty("id", out var id) ? id.GetString() : null)
+                    .Where(x => !string.IsNullOrWhiteSpace(x) &&
+                        !x.Contains("embedding", StringComparison.OrdinalIgnoreCase) &&
+                        !x.Contains("rerank", StringComparison.OrdinalIgnoreCase))
+                    .OrderByDescending(x => x!.Contains("qwen3.5", StringComparison.OrdinalIgnoreCase))
+                    .FirstOrDefault();
             }
             if (string.IsNullOrWhiteSpace(model)) return null;
             string evidence = books.Count == 0 ? "DANH MỤC TRỐNG" : string.Join("\n", books.Select(b =>

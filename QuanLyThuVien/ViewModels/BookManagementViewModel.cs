@@ -1067,9 +1067,10 @@ namespace QuanLyThuVien.ViewModels
         [DataMember(Name = "authors")] public string Authors { get; set; }
         [DataMember(Name = "categories")] public string Categories { get; set; }
         [DataMember(Name = "availableCopies")] public int AvailableCopies { get; set; }
+        [DataMember(Name = "coverUrl")] public string CoverUrl { get; set; }
         [DataMember(Name = "reason")] public string Reason { get; set; }
         public string Availability => AvailableCopies > 0
-            ? "Còn " + AvailableCopies + " cuốn" : "Tạm hết sách";
+            ? "Còn " + AvailableCopies + " cuốn có thể mượn" : "Hiện chưa có cuốn sẵn sàng";
     }
 
     [DataContract]

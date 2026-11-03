@@ -175,7 +175,10 @@ namespace QuanLyThuVien.ViewModels
             await NavigateHomeAsync();
             // Populate unread badge on login; no polling or background service.
             if (IsReader && Notifications != null)
+            {
                 await Notifications.LoadAsync();
+                Notifications.StartAutoRefresh();
+            }
         }
 
         private async Task OpenBorrowRequestFromBookAsync(CatalogBook book)
@@ -358,6 +361,7 @@ namespace QuanLyThuVien.ViewModels
         {
             if (_loggingOut) return;
             _loggingOut = true;
+            Notifications?.StopAutoRefresh();
             try { await _auth.LogoutAsync(_token); }
             finally { LogoutRequested?.Invoke(this, EventArgs.Empty); }
         }

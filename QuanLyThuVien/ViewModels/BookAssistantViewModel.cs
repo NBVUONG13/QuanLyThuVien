@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Globalization;
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Net;
@@ -26,6 +27,7 @@ namespace QuanLyThuVien.ViewModels
         public BookAssistantViewModel(string token)
         {
             _token = token;
+            Suggestions.CollectionChanged += (sender, args) => Notify(nameof(HasSuggestions));
             AskCommand = new AsyncCommand(_ => AskAsync(), _ => !Busy);
             OpenBookCommand = new ActionCommand(_ =>
             {
@@ -46,6 +48,7 @@ namespace QuanLyThuVien.ViewModels
         public event Action<long> FindShelfRequested;
         public ObservableCollection<BookAssistantMessage> Messages { get; } = new ObservableCollection<BookAssistantMessage>();
         public ObservableCollection<BookAssistantSuggestion> Suggestions { get; } = new ObservableCollection<BookAssistantSuggestion>();
+        public bool HasSuggestions { get { return Suggestions.Count > 0; } }
         public ICommand AskCommand { get; }
         public ICommand OpenBookCommand { get; }
         public ICommand FindShelfCommand { get; }
@@ -63,18 +66,39 @@ namespace QuanLyThuVien.ViewModels
             set { Set(ref _selectedBook, value); }
         }
 
-        // UI-side guard complements backend; never show recommendations beside
-        // personal loans, due dates, fines or administrative answers.
+        // A live loan/due-date/fine question never receives an old or random catalog list.
+        // Default is hidden: show cards only for explicit book discovery/recommendations.
         private static bool IsBookDiscoveryQuestion(string question)
         {
-            string q = (question ?? "").ToLowerInvariant();
-            if (q.Contains("đang mượn") || q.Contains("hạn trả") ||
-                q.Contains("hết hạn") || q.Contains("quá hạn") ||
-                q.Contains("tiền phạt") || q.Contains("lịch sử mượn") ||
-                q.Contains("chấm công") || q.Contains("bảng lương") ||
-                q.Contains("độc giả") || q.Contains("nhân viên"))
-                return false;
-            return true; // Backend is the authority on whether suggestions exist.
+            string q = NormalizeQuestion(question);
+            if (ContainsAny(q, "dang muon", "dang giu", "han tra", "het han",
+                "qua han", "tien phat", "no phat", "lich su muon",
+                "don muon", "gia han", "cham cong", "bang luong",
+                "doc gia", "nhan vien", "thong bao", "tra sach")) return false;
+            return ContainsAny(q,
+                "goi y", "nen doc", "muon doc", "muon hoc", "sach nao hay",
+                "tim sach", "co sach nao", "sach giong", "sach tuong tu",
+                "gioi thieu sach", "gioi thieu the loai", "tu van sach",
+                "the loai", "tac gia", "trinh tham", "lap trinh", "thuat toan",
+                "truyen ve", "sach ve", "van hoc", "tieu thuyet", "kinh di");
+        }
+
+        private static bool ContainsAny(string q, params string[] patterns)
+        {
+            foreach (string pattern in patterns)
+                if (q.Contains(pattern)) return true;
+            return false;
+        }
+
+        private static string NormalizeQuestion(string question)
+        {
+            string raw = (question ?? "").ToLowerInvariant().Replace('đ', 'd')
+                .Normalize(NormalizationForm.FormD);
+            var sb = new StringBuilder(raw.Length);
+            foreach (char c in raw)
+                if (CharUnicodeInfo.GetUnicodeCategory(c) != UnicodeCategory.NonSpacingMark)
+                    sb.Append(c);
+            return sb.ToString().Normalize(NormalizationForm.FormC);
         }
 
         public async Task AskAsync()

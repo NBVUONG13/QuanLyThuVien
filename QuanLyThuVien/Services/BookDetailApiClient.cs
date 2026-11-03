@@ -278,6 +278,8 @@ namespace QuanLyThuVien.Services
         [DataMember(Name = "availableCopies")] public long AvailableCopies { get; set; }
         [DataMember(Name = "onLoanCopies")] public long OnLoanCopies { get; set; }
         [DataMember(Name = "coverUrl")] public string CoverUrl { get; set; }
+        public string PhysicalStockStatus => TotalCopies > 0
+            ? "Đã nhập " + TotalCopies + " bản vật lý" : "Chưa nhập bản vật lý; chưa có cuốn để mượn ngay.";
         public string Error { get; set; }
         public static BookDetailResult Fail(string error) { return new BookDetailResult { Error = error }; }
     }

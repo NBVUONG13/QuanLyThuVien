@@ -350,6 +350,13 @@ namespace QuanLyThuVien.Services
             [DataMember(Name = "citizenId")] public string CitizenId { get; set; }
         }
 
+        // STEP 85: Reader-only idempotent server synchronization of due reminders.
+        // This uses the existing authenticated HTTP client and does not access SQL from WPF.
+        public Task<LoanActionResult> SyncDueRemindersAsync(string token)
+        {
+            return SendActionAsync("http://127.0.0.1:5082/api/notifications/sync-due", token, "{}");
+        }
+
         // STEP 71: Read-only notifications + mark-as-read. No client-side SQL.
         public async Task<LibraryNotificationListResult> GetNotificationsAsync(string token)
         {

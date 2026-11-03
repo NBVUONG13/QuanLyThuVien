@@ -26,6 +26,9 @@ builder.Services.AddHostedService<ReaderTierAutoHostedService>();
 
 var app = builder.Build();
 
+// Local cover images from wwwroot/covers (only API on 127.0.0.1:5082).
+app.UseStaticFiles();
+
 // Step 75: Admin policy UI endpoints live in their own module.
 app.MapLibraryPolicyEndpoints();
 // Step 77: Quan ly dau sach, nhap kho va xu ly sach mat/hong.
@@ -446,7 +449,8 @@ app.MapGet("/api/books", async (
                              JOIN public.categories c ON c.category_id=bc.category_id
                              WHERE bc.book_id=b.book_id),''),
                    COALESCE((SELECT COUNT(*) FROM public.book_copies cp
-                             WHERE cp.book_id=b.book_id),0)
+                             WHERE cp.book_id=b.book_id),0),
+                   COALESCE(b.cover_url,''), COALESCE(b.cover_object_key,'')
             FROM public.books b
             LEFT JOIN public.publishers p ON p.publisher_id=b.publisher_id
             WHERE b.is_visible=TRUE
@@ -471,7 +475,9 @@ app.MapGet("/api/books", async (
                 publicationYear = reader.GetInt32(4),
                 authors = reader.GetString(5),
                 categories = reader.GetString(6),
-                physicalCopies = reader.GetInt64(7)
+                physicalCopies = reader.GetInt64(7),
+                coverUrl = BookCoverUrlResolver.Resolve(
+                    reader.GetString(8), reader.GetString(9), config, app.Environment)
             });
         }
         return Results.Ok(new { books });
@@ -583,7 +589,7 @@ app.MapGet("/api/books/{bookId:long}/details", async (
                      WHERE c.book_id=b.book_id AND EXISTS (
                          SELECT 1 FROM public.borrow_details bd
                          WHERE bd.book_copy_id=c.copy_id AND bd.closed_at IS NULL)),
-                   COALESCE(b.cover_object_key,'')
+                   COALESCE(b.cover_object_key,''), COALESCE(b.cover_url,'')
             FROM public.books b
             LEFT JOIN public.publishers p ON p.publisher_id=b.publisher_id
             WHERE b.book_id=@id AND b.is_visible=TRUE;";
@@ -605,7 +611,8 @@ app.MapGet("/api/books/{bookId:long}/details", async (
             activeCopies = reader.GetInt64(9),
             availableCopies = reader.GetInt64(10),
             onLoanCopies = reader.GetInt64(11),
-            coverUrl = BuildPublicCoverUrl(reader.GetString(12), config)
+            coverUrl = BookCoverUrlResolver.Resolve(
+                reader.GetString(13), reader.GetString(12), config, app.Environment)
         });
     }
     catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -770,23 +777,6 @@ app.MapPut("/api/books/{bookId:long}/rating", async (
         return Results.Json(new { message = "Không lưu được đánh giá sách." }, statusCode: 503);
     }
 });
-
-// Only expose cover images if there is an explicitly configured public HTTPS CDN.
-// cover_object_key is a storage key, NEVER a URL or a database secret.
-static string? BuildPublicCoverUrl(string key, IConfiguration config)
-{
-    string? baseUrl = config["BookCovers:PublicBaseUrl"]?.Trim();
-    if (string.IsNullOrWhiteSpace(baseUrl) || string.IsNullOrWhiteSpace(key)) return null;
-    if (!Uri.TryCreate(baseUrl, UriKind.Absolute, out var origin) || origin.Scheme != Uri.UriSchemeHttps)
-        return null;
-    if (key.StartsWith('/') || key.Contains('\\') || key.Contains('?') || key.Contains('#'))
-        return null;
-    string[] segments = key.Split('/');
-    if (segments.Any(part => part.Length == 0 || part == "." || part == ".." || part.Contains(':')))
-        return null;
-    string path = string.Join("/", segments.Select(Uri.EscapeDataString));
-    return baseUrl.TrimEnd('/') + "/" + path;
-}
 
 app.MapGet("/api/books/{bookId:long}/copies", async (
     long bookId, HttpRequest request, SessionService sessions,

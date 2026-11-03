@@ -83,8 +83,8 @@
                             </StackPanel>
                         </Button>
                         <Button Style="{StaticResource SideButton}" Content="ĐẶT ĐƠN MƯỢN SÁCH" Command="{Binding RequestsCommand}" ToolTip="Xem danh mục, chọn 1-5 đầu sách và gửi yêu cầu"/>
-                        <Button Style="{StaticResource SideButton}" Content="ĐƠN ĐÃ ĐẶT / LỊCH SỬ" Command="{Binding LoansCommand}"/>
-                        <Button Style="{StaticResource SideButton}" Content="Gia hạn sách" Command="{Binding LoansCommand}" ToolTip="Chọn cuốn đang mượn trong bảng Sách đã nhận, kéo xuống mục Yêu cầu gia hạn từng cuốn"/>
+                        <Button Style="{StaticResource SideButton}" Content="MƯỢN &amp; GIA HẠN" Command="{Binding LoansCommand}"
+                                ToolTip="Đơn đã đặt, lịch sử mượn/trả và yêu cầu gia hạn trong 3 tab"/>
                         <Button Style="{StaticResource SideButton}" Content="Tiền phạt" Command="{Binding FinesCommand}"/>
                     </StackPanel>
                     <StackPanel Visibility="{Binding CanManage, Converter={StaticResource BoolVisibility}}">
@@ -102,7 +102,7 @@
                         <Button Style="{StaticResource SideButton}" Content="Quản lý nhân viên" Command="{Binding StaffCommand}"/>
                         <Button Style="{StaticResource SideButton}" Content="Chính sách thư viện" Command="{Binding PolicyCommand}"/>
                         <Button Style="{StaticResource SideButton}" Content="BÁO CÁO QUẢN TRỊ" Command="{Binding ReportsCommand}" ToolTip="Thống kê mượn/trả, kho và tiền phạt theo khoảng ngày"/>
-                        <Button Style="{StaticResource SideButton}" Content="Sao lưu dữ liệu" Command="{Binding PendingCommand}" CommandParameter="Sao lưu dữ liệu"/>
+
                     </StackPanel>
                 </StackPanel>
             </ScrollViewer>
@@ -223,34 +223,32 @@
                 </Grid>
             </ScrollViewer>
         </DockPanel>
-        <!-- AI assistant for all authenticated roles; backend enforces per-query access. -->
-        <Grid Grid.ColumnSpan="2" Panel.ZIndex="100" HorizontalAlignment="Right" VerticalAlignment="Stretch"
-              Width="410" Margin="0,8,22,20" Visibility="{Binding IsAuthenticated, Converter={StaticResource BoolVisibility}}">
-            <Grid.RowDefinitions>
-                <RowDefinition Height="*"/>
-                <RowDefinition Height="12"/>
-                <RowDefinition Height="58"/>
-            </Grid.RowDefinitions>
-            <Border Grid.Row="0" MaxHeight="570" VerticalAlignment="Stretch" CornerRadius="16"
+        <!-- Canvas is over the entire window, NOT inside the scrolling content.
+             Canvas.Right/Bottom are real pixel anchors independent of row measurement.
+             Transparent canvas background does not capture clicks outside the chat. -->
+        <Canvas Grid.ColumnSpan="2" Panel.ZIndex="1000"
+                Background="{x:Null}"
+                Visibility="{Binding IsAuthenticated, Converter={StaticResource BoolVisibility}}">
+            <Border Width="410" Height="515" Canvas.Right="20" Canvas.Bottom="20" CornerRadius="14"
                     Background="White" BorderBrush="#DDD5EB" BorderThickness="1"
                     Visibility="{Binding IsAssistantOpen, Converter={StaticResource BoolVisibility}}">
                 <Border.Effect>
-                    <DropShadowEffect Color="#36264B" BlurRadius="20" ShadowDepth="3" Opacity="0.2"/>
+                    <DropShadowEffect Color="#36264B" BlurRadius="20" ShadowDepth="3" Opacity="0.22"/>
                 </Border.Effect>
                 <Grid ClipToBounds="True">
                     <Grid.RowDefinitions>
-                        <RowDefinition Height="52"/>
+                        <RowDefinition Height="48"/>
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
-                    <Border Grid.Row="0" Background="#453563" CornerRadius="15,15,0,0">
-                        <DockPanel Margin="16,0,10,0" LastChildFill="True">
+                    <Border Grid.Row="0" Background="#453563" CornerRadius="13,13,0,0">
+                        <DockPanel Margin="14,0,8,0" LastChildFill="True">
                             <Button DockPanel.Dock="Right" Content="✕" FontSize="17" FontWeight="Bold"
                                     Background="Transparent" Foreground="White" BorderThickness="0"
-                                    Cursor="Hand" Width="36" Height="36" ToolTip="Thu gọn trợ lý"
+                                    Cursor="Hand" Width="36" Height="34" ToolTip="Đóng chat"
                                     Command="{Binding AssistantCommand}"/>
                             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                <TextBlock Text="✦" FontSize="21" Foreground="#D8C4FF" Margin="0,0,10,0"/>
-                                <TextBlock Text="TRỢ LÝ THƯ VIỆN" FontSize="15" FontWeight="Bold"
+                                <TextBlock Text="✦" FontSize="20" Foreground="#D8C4FF" Margin="0,0,9,0"/>
+                                <TextBlock Text="TRỢ LÝ THƯ VIỆN" FontSize="14" FontWeight="Bold"
                                            Foreground="White" VerticalAlignment="Center"/>
                             </StackPanel>
                         </DockPanel>
@@ -258,10 +256,20 @@
                     <views:BookAssistantView Grid.Row="1" DataContext="{Binding AssistantPage}"/>
                 </Grid>
             </Border>
-            <Button Grid.Row="2" Width="58" Height="58" HorizontalAlignment="Right"
+            <Button Width="58" Height="58" Canvas.Right="20" Canvas.Bottom="20"
                     Command="{Binding AssistantCommand}" Cursor="Hand"
-                    ToolTip="Mở / thu gọn trợ lý tìm sách" Background="#6C4AA4" Foreground="White"
+                    ToolTip="Mở trợ lý thư viện" Background="#6C4AA4" Foreground="White"
                     FontSize="17" FontWeight="Bold" BorderThickness="0" Content="AI">
+                <Button.Style>
+                    <Style TargetType="Button">
+                        <Setter Property="Visibility" Value="Visible"/>
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsAssistantOpen}" Value="True">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Button.Style>
                 <Button.Template>
                     <ControlTemplate TargetType="Button">
                         <Border x:Name="RoundButton" Background="{TemplateBinding Background}"
@@ -279,6 +287,6 @@
                     </ControlTemplate>
                 </Button.Template>
             </Button>
-        </Grid>
+        </Canvas>
     </Grid>
 </Window>

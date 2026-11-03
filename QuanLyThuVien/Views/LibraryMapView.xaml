@@ -6,7 +6,7 @@
     <StackPanel>
         <StackPanel Margin="0,0,0,14">
             <TextBlock Text="SƠ ĐỒ THƯ VIỆN 2D" FontSize="25" FontWeight="Bold" Foreground="#27213C"/>
-            <TextBlock Text="Chọn sách để xem kệ, tầng/ô và lối đi trên mặt bằng 2D DEMO" TextWrapping="Wrap" FontSize="12" Foreground="#6C607B" Margin="0,5,0,0"/>
+            <TextBlock Text="26 kệ riêng từ K1 đến K26 • Mỗi kệ một vị trí trên sơ đồ" TextWrapping="Wrap" FontSize="12" Foreground="#6C607B" Margin="0,5,0,0"/>
         </StackPanel>
         <Grid>
             <Grid.ColumnDefinitions>
@@ -18,7 +18,7 @@
             <Border Grid.Column="0" Background="White" BorderBrush="#E5E7EB" BorderThickness="1" CornerRadius="12" Padding="15" VerticalAlignment="Top">
                 <StackPanel>
                     <TextBlock Text="TÌM SÁCH TRONG THƯ VIỆN" FontWeight="Bold" Foreground="#433663"/>
-                    <TextBox Text="{Binding Search, UpdateSourceTrigger=PropertyChanged}" Height="36" Margin="0,9,0,8" Padding="9,6" ToolTip="Tìm theo tên sách hoặc mã kệ, ví dụ K3"/>
+                    <TextBox Text="{Binding Search, UpdateSourceTrigger=PropertyChanged}" Height="36" Margin="0,9,0,8" Padding="9,6" ToolTip="Tìm tên sách hoặc mã kệ (K1–K26)"/>
                     <ListBox ItemsSource="{Binding Matches}" SelectedItem="{Binding SelectedBook, Mode=TwoWay}" Height="187" BorderBrush="#E5E7EB" Background="#FAFBFF" ScrollViewer.VerticalScrollBarVisibility="Auto">
                         <ListBox.ItemTemplate>
                             <DataTemplate>
@@ -50,127 +50,63 @@
                 <Viewbox Stretch="Uniform" HorizontalAlignment="Stretch">
                     <Canvas Width="980" Height="660" Background="#F6F2EA">
                         <Rectangle Width="944" Height="624" Canvas.Left="18" Canvas.Top="18" Fill="#EEE8DD" Stroke="#BEB4A5" StrokeThickness="5"/>
-                        <!-- Reading space; book shelves below. Positions are demo coordinates, not surveyed. -->
-                        <Border Width="690" Height="206" Canvas.Left="30" Canvas.Top="30" BorderBrush="#D7CAB9" BorderThickness="0,0,0,2" Background="#F9F6F0">
+                        <!-- Sơ đồ 2D bố trí 26 kệ riêng; lối đi được tính trên lưới. -->
+                        <Border Width="690" Height="110" Canvas.Left="30" Canvas.Top="30" BorderBrush="#D7CAB9" BorderThickness="0,0,0,2" Background="#F9F6F0">
                             <TextBlock Text="KHU ĐỌC SÁCH" FontWeight="Bold" Foreground="#5D564A" HorizontalAlignment="Center" Margin="0,13,0,0"/>
                         </Border>
-                        <Border Width="210" Height="185" Canvas.Left="735" Canvas.Top="32" Background="#E2EAF2" BorderBrush="#AFBECB" BorderThickness="2" CornerRadius="10">
+                        <Border Width="210" Height="110" Canvas.Left="735" Canvas.Top="30" Background="#E2EAF2" BorderBrush="#AFBECB" BorderThickness="2" CornerRadius="10">
                             <TextBlock Text="PHÒNG HỌC NHÓM" FontWeight="Bold" Foreground="#425C6B" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,14,0,0"/>
                         </Border>
                         <!-- Reading desks and chairs. -->
-                        <Rectangle Width="120" Height="76" Canvas.Left="96" Canvas.Top="99" RadiusX="12" RadiusY="12" Fill="#C59D6B" Stroke="#956D47" StrokeThickness="3"/>
-                        <Rectangle Width="120" Height="76" Canvas.Left="286" Canvas.Top="99" RadiusX="12" RadiusY="12" Fill="#C59D6B" Stroke="#956D47" StrokeThickness="3"/>
-                        <Rectangle Width="120" Height="76" Canvas.Left="492" Canvas.Top="99" RadiusX="12" RadiusY="12" Fill="#C59D6B" Stroke="#956D47" StrokeThickness="3"/>
-                        <Rectangle Width="114" Height="71" Canvas.Left="780" Canvas.Top="105" RadiusX="10" RadiusY="10" Fill="#D2B18D" Stroke="#96785A" StrokeThickness="3"/>
-                        <TextBlock Text="Đọc • Nghiên cứu" Canvas.Left="235" Canvas.Top="195" Foreground="#867C6C" FontSize="13"/>
-                        <TextBlock Text="LỐI ĐI GIỮA CÁC KỆ" Canvas.Left="375" Canvas.Top="489" Foreground="#988F7F" FontWeight="Bold" FontSize="12"/>
-                        <Border Width="76" Height="200" Canvas.Left="65" Canvas.Top="265" Background="#B48856" BorderBrush="#8A6845" BorderThickness="3" CornerRadius="5" Tag="K1" Cursor="Hand" MouseLeftButtonUp="ShelfClick" ToolTip="Chọn kệ K1 khi nhập kho">
-                            <Grid>
-                                <Grid.RowDefinitions>
-                                    <RowDefinition Height="26"/>
-                                    <RowDefinition Height="*"/>
-                                    <RowDefinition Height="*"/>
-                                    <RowDefinition Height="*"/>
-                                </Grid.RowDefinitions>
-                                <Border Background="#3F526D" CornerRadius="3" Margin="3,2,3,2">
-                                    <TextBlock Text="K1" Foreground="White" FontSize="17" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                                </Border>
-                                <Border Grid.Row="1" Background="#EBD4AF" BorderBrush="#9F784A" BorderThickness="0,0,0,4" Margin="7,4"/>
-                                <Border Grid.Row="2" Background="#DDBD88" BorderBrush="#9F784A" BorderThickness="0,0,0,4" Margin="7,4"/>
-                                <Border Grid.Row="3" Background="#EBD4AF" BorderBrush="#9F784A" BorderThickness="0,0,0,4" Margin="7,4"/>
-                            </Grid>
-                        </Border>
-                        <Border Width="76" Height="200" Canvas.Left="210" Canvas.Top="265" Background="#B48856" BorderBrush="#8A6845" BorderThickness="3" CornerRadius="5" Tag="K2" Cursor="Hand" MouseLeftButtonUp="ShelfClick" ToolTip="Chọn kệ K2 khi nhập kho">
-                            <Grid>
-                                <Grid.RowDefinitions>
-                                    <RowDefinition Height="26"/>
-                                    <RowDefinition Height="*"/>
-                                    <RowDefinition Height="*"/>
-                                    <RowDefinition Height="*"/>
-                                </Grid.RowDefinitions>
-                                <Border Background="#3F526D" CornerRadius="3" Margin="3,2,3,2">
-                                    <TextBlock Text="K2" Foreground="White" FontSize="17" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                                </Border>
-                                <Border Grid.Row="1" Background="#EBD4AF" BorderBrush="#9F784A" BorderThickness="0,0,0,4" Margin="7,4"/>
-                                <Border Grid.Row="2" Background="#DDBD88" BorderBrush="#9F784A" BorderThickness="0,0,0,4" Margin="7,4"/>
-                                <Border Grid.Row="3" Background="#EBD4AF" BorderBrush="#9F784A" BorderThickness="0,0,0,4" Margin="7,4"/>
-                            </Grid>
-                        </Border>
-                        <Border Width="76" Height="200" Canvas.Left="355" Canvas.Top="265" Background="#B48856" BorderBrush="#8A6845" BorderThickness="3" CornerRadius="5" Tag="K3" Cursor="Hand" MouseLeftButtonUp="ShelfClick" ToolTip="Chọn kệ K3 khi nhập kho">
-                            <Grid>
-                                <Grid.RowDefinitions>
-                                    <RowDefinition Height="26"/>
-                                    <RowDefinition Height="*"/>
-                                    <RowDefinition Height="*"/>
-                                    <RowDefinition Height="*"/>
-                                </Grid.RowDefinitions>
-                                <Border Background="#3F526D" CornerRadius="3" Margin="3,2,3,2">
-                                    <TextBlock Text="K3" Foreground="White" FontSize="17" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                                </Border>
-                                <Border Grid.Row="1" Background="#EBD4AF" BorderBrush="#9F784A" BorderThickness="0,0,0,4" Margin="7,4"/>
-                                <Border Grid.Row="2" Background="#DDBD88" BorderBrush="#9F784A" BorderThickness="0,0,0,4" Margin="7,4"/>
-                                <Border Grid.Row="3" Background="#EBD4AF" BorderBrush="#9F784A" BorderThickness="0,0,0,4" Margin="7,4"/>
-                            </Grid>
-                        </Border>
-                        <Border Width="76" Height="200" Canvas.Left="500" Canvas.Top="265" Background="#B48856" BorderBrush="#8A6845" BorderThickness="3" CornerRadius="5" Tag="K4" Cursor="Hand" MouseLeftButtonUp="ShelfClick" ToolTip="Chọn kệ K4 khi nhập kho">
-                            <Grid>
-                                <Grid.RowDefinitions>
-                                    <RowDefinition Height="26"/>
-                                    <RowDefinition Height="*"/>
-                                    <RowDefinition Height="*"/>
-                                    <RowDefinition Height="*"/>
-                                </Grid.RowDefinitions>
-                                <Border Background="#3F526D" CornerRadius="3" Margin="3,2,3,2">
-                                    <TextBlock Text="K4" Foreground="White" FontSize="17" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                                </Border>
-                                <Border Grid.Row="1" Background="#EBD4AF" BorderBrush="#9F784A" BorderThickness="0,0,0,4" Margin="7,4"/>
-                                <Border Grid.Row="2" Background="#DDBD88" BorderBrush="#9F784A" BorderThickness="0,0,0,4" Margin="7,4"/>
-                                <Border Grid.Row="3" Background="#EBD4AF" BorderBrush="#9F784A" BorderThickness="0,0,0,4" Margin="7,4"/>
-                            </Grid>
-                        </Border>
-                        <Border Width="76" Height="200" Canvas.Left="645" Canvas.Top="265" Background="#B48856" BorderBrush="#8A6845" BorderThickness="3" CornerRadius="5" Tag="K5" Cursor="Hand" MouseLeftButtonUp="ShelfClick" ToolTip="Chọn kệ K5 khi nhập kho">
-                            <Grid>
-                                <Grid.RowDefinitions>
-                                    <RowDefinition Height="26"/>
-                                    <RowDefinition Height="*"/>
-                                    <RowDefinition Height="*"/>
-                                    <RowDefinition Height="*"/>
-                                </Grid.RowDefinitions>
-                                <Border Background="#3F526D" CornerRadius="3" Margin="3,2,3,2">
-                                    <TextBlock Text="K5" Foreground="White" FontSize="17" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                                </Border>
-                                <Border Grid.Row="1" Background="#EBD4AF" BorderBrush="#9F784A" BorderThickness="0,0,0,4" Margin="7,4"/>
-                                <Border Grid.Row="2" Background="#DDBD88" BorderBrush="#9F784A" BorderThickness="0,0,0,4" Margin="7,4"/>
-                                <Border Grid.Row="3" Background="#EBD4AF" BorderBrush="#9F784A" BorderThickness="0,0,0,4" Margin="7,4"/>
-                            </Grid>
-                        </Border>
-                        <Border Width="76" Height="200" Canvas.Left="790" Canvas.Top="265" Background="#B48856" BorderBrush="#8A6845" BorderThickness="3" CornerRadius="5" Tag="K6" Cursor="Hand" MouseLeftButtonUp="ShelfClick" ToolTip="Chọn kệ K6 khi nhập kho">
-                            <Grid>
-                                <Grid.RowDefinitions>
-                                    <RowDefinition Height="26"/>
-                                    <RowDefinition Height="*"/>
-                                    <RowDefinition Height="*"/>
-                                    <RowDefinition Height="*"/>
-                                </Grid.RowDefinitions>
-                                <Border Background="#3F526D" CornerRadius="3" Margin="3,2,3,2">
-                                    <TextBlock Text="K6" Foreground="White" FontSize="17" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                                </Border>
-                                <Border Grid.Row="1" Background="#EBD4AF" BorderBrush="#9F784A" BorderThickness="0,0,0,4" Margin="7,4"/>
-                                <Border Grid.Row="2" Background="#DDBD88" BorderBrush="#9F784A" BorderThickness="0,0,0,4" Margin="7,4"/>
-                                <Border Grid.Row="3" Background="#EBD4AF" BorderBrush="#9F784A" BorderThickness="0,0,0,4" Margin="7,4"/>
-                            </Grid>
-                        </Border>
+                        <Rectangle Width="120" Height="76" Canvas.Left="96" Canvas.Top="64" RadiusX="12" RadiusY="12" Fill="#C59D6B" Stroke="#956D47" StrokeThickness="3"/>
+                        <Rectangle Width="120" Height="76" Canvas.Left="286" Canvas.Top="64" RadiusX="12" RadiusY="12" Fill="#C59D6B" Stroke="#956D47" StrokeThickness="3"/>
+                        <Rectangle Width="120" Height="76" Canvas.Left="492" Canvas.Top="64" RadiusX="12" RadiusY="12" Fill="#C59D6B" Stroke="#956D47" StrokeThickness="3"/>
+                        <Rectangle Width="114" Height="71" Canvas.Left="780" Canvas.Top="64" RadiusX="10" RadiusY="10" Fill="#D2B18D" Stroke="#96785A" StrokeThickness="3"/>
+                        <TextBlock Text="Đọc • Nghiên cứu" Canvas.Left="235" Canvas.Top="145" Foreground="#867C6C" FontSize="13"/>
+                        <TextBlock Text="LỐI ĐI GIỮA CÁC KỆ" Canvas.Left="362" Canvas.Top="552" Foreground="#988F7F" FontWeight="Bold" FontSize="12"/>
+                        <!-- Each K1..K26 is a separate visual shelf and a separate BFS obstacle. -->
+                        <ItemsControl ItemsSource="{Binding Shelves}" Width="980" Height="660">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <Canvas/>
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemContainerStyle>
+                                <Style TargetType="ContentPresenter">
+                                    <Setter Property="Canvas.Left" Value="{Binding X}"/>
+                                    <Setter Property="Canvas.Top" Value="{Binding Y}"/>
+                                </Style>
+                            </ItemsControl.ItemContainerStyle>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Width="100" Height="48" Background="#B48856"
+                                            BorderBrush="#8A6845" BorderThickness="2" CornerRadius="5"
+                                            Tag="{Binding Code}" Cursor="Hand" MouseLeftButtonUp="ShelfClick"
+                                            ToolTip="{Binding Label}">
+                                        <StackPanel>
+                                            <Border Background="#3F526D" Margin="2,1,2,1" CornerRadius="3">
+                                                <TextBlock Text="{Binding Code}" HorizontalAlignment="Center"
+                                                           Foreground="White" FontSize="15" FontWeight="Bold"/>
+                                            </Border>
+                                            <TextBlock Text="{Binding Label}" Foreground="#21190E"
+                                                       TextTrimming="CharacterEllipsis" FontSize="10"
+                                                       HorizontalAlignment="Center" Margin="3,0"/>
+                                        </StackPanel>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
                         <!-- Reception and new-book display block aisles in pathfinder. -->
-                        <Border Width="212" Height="82" Canvas.Left="40" Canvas.Top="525" Background="#9C7B5C" BorderBrush="#805C43" BorderThickness="3" CornerRadius="17">
+                        <Border Width="212" Height="52" Canvas.Left="40" Canvas.Top="570" Background="#9C7B5C" BorderBrush="#805C43" BorderThickness="3" CornerRadius="17">
                             <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
                                 <TextBlock Text="QUẦY PHỤC VỤ" Foreground="White" FontWeight="Bold" FontSize="15"/>
                                 <TextBlock Text="Staff / Admin" Foreground="#F5E8DA" HorizontalAlignment="Center"/>
                             </StackPanel>
                         </Border>
-                        <Border Width="184" Height="84" Canvas.Left="745" Canvas.Top="530" Background="#D7B68A" BorderBrush="#9B7951" BorderThickness="3" CornerRadius="9">
+                        <Border Width="184" Height="52" Canvas.Left="745" Canvas.Top="570" Background="#D7B68A" BorderBrush="#9B7951" BorderThickness="3" CornerRadius="9">
                             <TextBlock Text="KHU SÁCH MỚI" HorizontalAlignment="Center" VerticalAlignment="Center" FontWeight="Bold" Foreground="#5B422B" FontSize="14"/>
                         </Border>
-                        <Border Width="140" Height="36" Canvas.Left="417" Canvas.Top="620" Background="#B1D5EF" BorderBrush="#75A9D5" BorderThickness="2" CornerRadius="6">
+                        <Border Width="140" Height="36" Canvas.Left="417" Canvas.Top="622" Background="#B1D5EF" BorderBrush="#75A9D5" BorderThickness="2" CornerRadius="6">
                             <TextBlock Text="CỬA VÀO" Foreground="#1F4970" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
                         <!-- Computed route (Polyline) and direction arrows overlay only walkable cells. -->
@@ -198,13 +134,22 @@
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
+                        <!-- Highlights the exact K1..K26 shelf selected from the database. -->
+                        <Border Width="96" Height="24" Background="#FFF7CC" BorderBrush="#D97706"
+                                BorderThickness="1.5" CornerRadius="5"
+                                Canvas.Left="{Binding ShelfBadgeX}" Canvas.Top="{Binding ShelfBadgeY}"
+                                Visibility="{Binding HasRoute, Converter={StaticResource BoolVisibility}}">
+                            <TextBlock Text="{Binding ShelfBadge}" Foreground="#854D0E"
+                                       FontSize="12" FontWeight="Bold" HorizontalAlignment="Center"
+                                       VerticalAlignment="Center"/>
+                        </Border>
                         <!-- Fixed start-point marker; no simulated visitor movement. -->
                         <Ellipse Width="26" Height="26" Fill="#2563EB" Stroke="White" StrokeThickness="4" Canvas.Left="{Binding PersonX}" Canvas.Top="{Binding PersonY}"/>
                         <Ellipse Width="34" Height="34" Fill="#FB7185" Stroke="White" StrokeThickness="4" Canvas.Left="{Binding TargetX}" Canvas.Top="{Binding TargetY}" Visibility="{Binding HasRoute, Converter={StaticResource BoolVisibility}}"/>
                         <Ellipse Width="12" Height="12" Fill="#FFF" Canvas.Left="{Binding TargetX}" Canvas.Top="{Binding TargetY}" Visibility="{Binding HasRoute, Converter={StaticResource BoolVisibility}}" Margin="11,11,0,0"/>
-                        <Border Width="270" Canvas.Left="680" Canvas.Top="222" Background="White" Padding="9" Visibility="{Binding HasRoute, Converter={StaticResource BoolVisibility}}" BorderBrush="#F43F5E" BorderThickness="2" CornerRadius="8">
+                        <Border Width="270" Canvas.Left="680" Canvas.Top="146" Background="White" Padding="9" Visibility="{Binding HasRoute, Converter={StaticResource BoolVisibility}}" BorderBrush="#F43F5E" BorderThickness="2" CornerRadius="8">
                             <StackPanel>
-                                <TextBlock Text="VỊ TRÍ CUỐN SÁCH" FontWeight="Bold" Foreground="#BE123C" FontSize="12"/>
+                                <TextBlock Text="MÃ KỆ ĐÍCH VÀ LỐI ĐI" FontWeight="Bold" Foreground="#BE123C" FontSize="12"/>
                                 <TextBlock Text="{Binding ShelfHint}" TextWrapping="Wrap" FontWeight="SemiBold" Foreground="#3F3647" Margin="0,3,0,0"/>
                             </StackPanel>
                         </Border>
@@ -212,6 +157,6 @@
                 </Viewbox>
             </Border>
         </Grid>
-        <TextBlock Text="Lưu ý: sơ đồ là mặt bằng DEMO. Điểm bắt đầu do bạn chọn, không phải vị trí được định vị tự động." Foreground="#78716C" FontSize="11" TextWrapping="Wrap" Margin="0,13,0,0"/>
+        <TextBlock Text="Các mã kệ K1–K26 trong Aiven khớp 26 vị trí trên sơ đồ. Lối đi là mặt bằng thiết kế cho bài tập lớn, không phải tọa độ đo thực địa." Foreground="#78716C" FontSize="11" TextWrapping="Wrap" Margin="0,13,0,0"/>
     </StackPanel>
 </UserControl>

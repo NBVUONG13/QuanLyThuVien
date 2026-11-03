@@ -6,7 +6,7 @@
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              mc:Ignorable="d" d:DesignWidth="410" d:DesignHeight="496">
     <UserControl.Resources>
-        <local:PositiveCountVisibilityConverter x:Key="PositiveCountVisible"/>
+        <BooleanToVisibilityConverter x:Key="ChatBooleanVisibility"/>
         <Style x:Key="ChatAction" TargetType="Button">
             <Setter Property="Background" Value="#625092"/>
             <Setter Property="Foreground" Value="White"/>
@@ -70,7 +70,7 @@
         <!-- Do not reserve space for recommendations when an operational answer has none. -->
         <Border Grid.Row="2" Background="White" BorderBrush="#E4DEEE" BorderThickness="1"
                 CornerRadius="9" Padding="8" Margin="0,0,0,8"
-                Visibility="{Binding Suggestions.Count, Converter={StaticResource PositiveCountVisible}}">
+                Visibility="{Binding HasSuggestions, Converter={StaticResource ChatBooleanVisibility}}">
             <StackPanel>
                 <TextBlock Text="SÁCH GỢI Ý TỪ THƯ VIỆN" FontSize="11" FontWeight="Bold"
                            Foreground="#44325E" Margin="2,0,0,5"/>

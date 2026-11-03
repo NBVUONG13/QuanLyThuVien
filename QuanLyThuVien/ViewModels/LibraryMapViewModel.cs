@@ -20,8 +20,26 @@ namespace QuanLyThuVien.ViewModels
         private LibraryMapItem _selected;
         private bool _busy, _hasRoute;
         private double _personX = 467, _personY = 607, _targetX, _targetY;
+        private double _shelfBadgeX, _shelfBadgeY;
+        private string _shelfBadge = "";
         private System.Windows.Media.PointCollection _routePoints = new System.Windows.Media.PointCollection();
-        private static readonly int[] ShelfX = { 65, 210, 355, 500, 645, 790 };
+        private const int ShelfCount = 26;
+        private const int ShelfColumns = 6;
+        private const int ShelfLeft = 45;
+        private const int ShelfTop = 180;
+        private const int ShelfStepX = 150;
+        private const int ShelfStepY = 80;
+        private const int ShelfWidth = 100;
+        private const int ShelfHeight = 48;
+        // Labels describe the display grouping. The shelf code is always K1..K26.
+        private static readonly string[] ShelfLabels = {
+            "Văn học Việt", "Thiếu nhi", "Truyện dài", "Lập trình", "Kỹ thuật", "Khoa học",
+            "Bà ngoại cây táo", "Triều đại Việt Nam", "Cậu bé đo thế giới", "Bà chúa tuyết",
+            "Chú lính chì", "Cô bé Lọ Lem", "Cu Ngói Trà Sư", "Đài phát thanh Popov",
+            "Kỹ năng tự giác", "Áp lực học hành", "Cú nhỏ tìm bạn", "Dơi đen cứu nạn",
+            "Nhúc nhích về đích", "Tắc kè hoa", "Mùa hè năm ấy", "Cửa hàng túi",
+            "Khách sạn êm đềm", "Thư viện đặc biệt", "Tiệm hoa diệu kì", "Lịch sử Trạng Hiền"
+        };
         private const int Cell = 20;
 
         public LibraryMapViewModel(string token)
@@ -32,6 +50,17 @@ namespace QuanLyThuVien.ViewModels
             StartOptions.Add("Cửa vào");
             StartOptions.Add("Quầy phục vụ");
             StartOptions.Add("Khu đọc sách");
+            for (int id = 1; id <= ShelfCount; id++)
+            {
+                int index = id - 1;
+                Shelves.Add(new LibraryShelfVisual
+                {
+                    Code = "K" + id,
+                    Label = ShelfLabels[index],
+                    X = ShelfLeft + (index % ShelfColumns) * ShelfStepX,
+                    Y = ShelfTop + (index / ShelfColumns) * ShelfStepY
+                });
+            }
         }
 
         public System.Collections.ObjectModel.ObservableCollection<LibraryMapItem> Matches { get; } =
@@ -40,6 +69,8 @@ namespace QuanLyThuVien.ViewModels
             new System.Collections.ObjectModel.ObservableCollection<string>();
         public System.Collections.ObjectModel.ObservableCollection<LibraryMapArrow> Arrows { get; } =
             new System.Collections.ObjectModel.ObservableCollection<LibraryMapArrow>();
+        public System.Collections.ObjectModel.ObservableCollection<LibraryShelfVisual> Shelves { get; } =
+            new System.Collections.ObjectModel.ObservableCollection<LibraryShelfVisual>();
         public ICommand ReloadCommand { get; }
         public ICommand ShowRouteCommand { get; }
         public bool Busy
@@ -75,6 +106,9 @@ namespace QuanLyThuVien.ViewModels
         public double PersonY { get => _personY; private set => Set(ref _personY, value); }
         public double TargetX { get => _targetX; private set => Set(ref _targetX, value); }
         public double TargetY { get => _targetY; private set => Set(ref _targetY, value); }
+        public double ShelfBadgeX { get => _shelfBadgeX; private set => Set(ref _shelfBadgeX, value); }
+        public double ShelfBadgeY { get => _shelfBadgeY; private set => Set(ref _shelfBadgeY, value); }
+        public string ShelfBadge { get => _shelfBadge; private set => Set(ref _shelfBadge, value); }
         public System.Windows.Media.PointCollection RoutePoints
         {
             get => _routePoints;
@@ -131,12 +165,14 @@ namespace QuanLyThuVien.ViewModels
             // Do not reset the selected destination while the visitor types a search.
         }
 
-        private static int ShelfNumber(string shelfLocation)
+        // The database stores K1..K26. A different cell is drawn for every shelf.
+        private static bool TryGetShelf(string shelfCode, out int shelfNumber)
         {
-            string s = (shelfLocation ?? "").Trim().ToUpperInvariant();
-            var m = System.Text.RegularExpressions.Regex.Match(s,
-                @"^(?:DEMO-KE-0?|KE-0?|K)([1-6])(?=$|[^0-9])");
-            return m.Success ? int.Parse(m.Groups[1].Value) : 0;
+            shelfNumber = 0;
+            string s = (shelfCode ?? "").Trim().ToUpperInvariant();
+            var match = System.Text.RegularExpressions.Regex.Match(s, @"^K([1-9]|1[0-9]|2[0-6])$");
+            return match.Success && int.TryParse(match.Groups[1].Value, out shelfNumber)
+                && shelfNumber >= 1 && shelfNumber <= ShelfCount;
         }
 
         private void DrawRoute()
@@ -144,53 +180,64 @@ namespace QuanLyThuVien.ViewModels
             Arrows.Clear();
             RoutePoints = new System.Windows.Media.PointCollection();
             HasRoute = false;
+            ShelfBadge = "";
             var book = SelectedBook;
             if (book == null)
             {
                 Destination = "Chưa chọn kệ";
+                ShelfHint = "Chọn sách để xem kệ.";
                 Message = "Chọn đầu sách để xem sơ đồ đường đi.";
                 return;
             }
-            int shelf = ShelfNumber(book.ShelfLocation);
-            Destination = (shelf > 0 ? "Kệ K" + shelf : "Kệ " + book.ShelfLocation)
-                        + " · Còn " + book.AvailableCopies + " cuốn có thể mượn";
-            if (shelf == 0)
+
+            int shelfNumber;
+            if (!TryGetShelf(book.ShelfLocation, out shelfNumber))
             {
-                Message = "Vị trí '" + book.ShelfLocation + "' chưa được cấu hình trên sơ đồ DEMO 6 kệ. "
-                    + "Không tự vẽ đường tới vị trí không biết.";
-                ShelfHint = "Kệ này chưa có tọa độ trên bản đồ.";
+                Destination = "Kệ " + (book.ShelfLocation ?? "(chưa có vị trí)");
+                ShelfHint = "Mã kệ chưa được đồng bộ vào sơ đồ K1–K26.";
+                Message = "Không nhận diện được mã '" + book.ShelfLocation +
+                    "'. Chạy SQL đồng bộ shelf_location, sau đó bấm LÀM MỚI VỊ TRÍ SÁCH.";
                 return;
             }
-            int destinationX = ShelfX[shelf - 1] + 110;
-            int destinationY = 350;
-            TargetX = destinationX - 17;
-            TargetY = destinationY - 17;
+
+            LibraryShelfVisual shelf = Shelves[shelfNumber - 1];
+            int destinationX = (int)shelf.X + ShelfWidth + 25;
+            int destinationY = (int)shelf.Y + 20;
+            Destination = "Kệ " + shelf.Code + "  •  Còn " + book.AvailableCopies + " cuốn có thể mượn";
+            ShelfHint = shelf.Code + "  •  " + shelf.Label + "  •  Lối đi bên phải kệ";
+
+            // Align destination marker to the same 20-pixel routing grid used by BFS.
+            double reachedX = Math.Round(destinationX / (double)Cell) * Cell;
+            double reachedY = Math.Round(destinationY / (double)Cell) * Cell;
             var start = StartLocation == "Quầy phục vụ"
-                ? new System.Windows.Point(280, 520)
+                ? new System.Windows.Point(280, 580)
                 : StartLocation == "Khu đọc sách"
-                    ? new System.Windows.Point(480, 220)
+                    ? new System.Windows.Point(480, 140)
                     : new System.Windows.Point(480, 620);
             var path = FindPath(start, new System.Windows.Point(destinationX, destinationY));
             if (path.Count == 0)
             {
-                Message = "Không tìm được lối đi hợp lệ trong sơ đồ DEMO.";
+                Message = "Không tìm được lối đi trên sơ đồ cho kệ " + book.ShelfLocation + ".";
                 return;
             }
+
             var corners = Simplify(path);
             var points = new System.Windows.Media.PointCollection();
-            foreach (var p in corners) points.Add(p);
+            foreach (var point in corners) points.Add(point);
             RoutePoints = points;
             HasRoute = true;
             BuildArrows(corners);
             PersonX = start.X - 13;
             PersonY = start.Y - 13;
-            var location = System.Text.RegularExpressions.Regex.Match(book.ShelfLocation ?? "",
-                @"(?i)-T([1-4])-([A-D][1-4])$");
-            ShelfHint = location.Success
-                ? "KỆ K" + shelf + "  •  TẦNG " + location.Groups[1].Value + "  •  Ô " + location.Groups[2].Value.ToUpperInvariant()
-                : "KỆ K" + shelf + "  •  Chưa gán tầng / ô";
-            Message = "Mã cuốn gợi ý: " +
-                      (string.IsNullOrWhiteSpace(book.SampleCopyCode) ? "chưa có cuốn khả dụng" : book.SampleCopyCode);
+            TargetX = reachedX - 17;
+            TargetY = reachedY - 17;
+            ShelfBadge = (book.ShelfLocation ?? "").Trim().ToUpperInvariant();
+            ShelfBadgeX = reachedX - 46;
+            ShelfBadgeY = reachedY - 45;
+            Message = "Mã cuốn khả dụng: " +
+                (string.IsNullOrWhiteSpace(book.SampleCopyCode)
+                    ? "chưa có cuốn khả dụng" : book.SampleCopyCode) +
+                ". Chỉ đường theo mặt bằng mô phỏng, không phải tọa độ đã đo thực tế.";
         }
 
         private void BuildArrows(System.Collections.Generic.List<System.Windows.Point> corners)
@@ -214,7 +261,7 @@ namespace QuanLyThuVien.ViewModels
             }
         }
 
-        // Grid BFS avoids the six shelves and the reception desk. 0.5m/cell is a demo estimate.
+        // Grid BFS avoids all 26 shelves and the service desk. Routes are illustrative.
         private static System.Collections.Generic.List<System.Windows.Point> FindPath(
             System.Windows.Point start, System.Windows.Point end)
         {
@@ -258,11 +305,17 @@ namespace QuanLyThuVien.ViewModels
         {
             int x = gridX * Cell, y = gridY * Cell;
             if (x < 20 || x > 960 || y < 20 || y > 640) return false;
-            for (int i = 0; i < ShelfX.Length; i++)
-                if (x >= ShelfX[i] - 9 && x <= ShelfX[i] + 85 && y >= 254 && y <= 478)
+            // Block all 26 individual shelving units; free aisles remain between them.
+            for (int shelf = 0; shelf < ShelfCount; shelf++)
+            {
+                int left = ShelfLeft + (shelf % ShelfColumns) * ShelfStepX;
+                int top = ShelfTop + (shelf / ShelfColumns) * ShelfStepY;
+                if (x >= left - 5 && x <= left + ShelfWidth + 5 &&
+                    y >= top - 6 && y <= top + ShelfHeight + 6)
                     return false;
-            if (x >= 40 && x <= 253 && y >= 530 && y <= 610) return false; // desk
-            if (x >= 745 && x <= 930 && y >= 530 && y <= 620) return false; // new-books display
+            }
+            if (x >= 40 && x <= 250 && y >= 570 && y <= 620) return false; // counter
+            if (x >= 745 && x <= 930 && y >= 570 && y <= 620) return false; // display
             return true;
         }
         private static System.Collections.Generic.List<System.Windows.Point> Simplify(
@@ -281,6 +334,15 @@ namespace QuanLyThuVien.ViewModels
             result.Add(points[points.Count - 1]);
             return result;
         }
+    }
+
+    // Position and book-category label for an independent physical shelf.
+    public sealed class LibraryShelfVisual
+    {
+        public string Code { get; set; }
+        public string Label { get; set; }
+        public double X { get; set; }
+        public double Y { get; set; }
     }
 
     public sealed class LibraryMapArrow
