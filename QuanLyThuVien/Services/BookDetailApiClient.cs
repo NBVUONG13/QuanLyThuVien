@@ -142,6 +142,44 @@ namespace QuanLyThuVien.Services
                 Inventory + "books" + (isNew ? "" : "/" + book.BookId), book);
         }
 
+        // Upload cover after a book has a real book_id. Only the API touches PostgreSQL/files.
+        public async Task<InventoryCoverUploadResponse> UploadInventoryCoverAsync(
+            string token, long bookId, string localFile)
+        {
+            if (bookId <= 0 || string.IsNullOrWhiteSpace(localFile))
+                return new InventoryCoverUploadResponse { Error = "Cần lưu đầu sách và chọn ảnh trước." };
+            try
+            {
+                var file = new FileInfo(localFile);
+                if (!file.Exists || file.Length < 1 || file.Length > 5L * 1024 * 1024)
+                    return new InventoryCoverUploadResponse { Error = "Ảnh không tồn tại hoặc vượt 5 MB." };
+                string ext = file.Extension.ToLowerInvariant();
+                string mime = ext == ".png" ? "image/png" : ext == ".webp" ? "image/webp" : "image/jpeg";
+                using (var request = Authorized(HttpMethod.Post, Inventory + "books/" + bookId + "/cover", token))
+                using (var multipart = new MultipartFormDataContent())
+                using (var input = File.OpenRead(localFile))
+                using (var fileContent = new StreamContent(input))
+                {
+                    fileContent.Headers.ContentType = new MediaTypeHeaderValue(mime);
+                    multipart.Add(fileContent, "cover", file.Name);
+                    request.Content = multipart;
+                    using (var response = await Http.SendAsync(request))
+                    {
+                        string json = await response.Content.ReadAsStringAsync();
+                        if (!response.IsSuccessStatusCode)
+                            return new InventoryCoverUploadResponse { Error = InventoryError(response.StatusCode, json) };
+                        return Deserialize<InventoryCoverUploadResponse>(json) ??
+                            new InventoryCoverUploadResponse { Error = "API chưa trả ảnh bìa mới." };
+                    }
+                }
+            }
+            catch (Exception ex) when (ex is HttpRequestException || ex is TaskCanceledException ||
+                ex is IOException || ex is UnauthorizedAccessException || ex is SerializationException)
+            {
+                return new InventoryCoverUploadResponse { Error = "Không tải được ảnh lên API (" + ex.GetType().Name + ")." };
+            }
+        }
+
         public Task<InventoryActionResponse> ReceiveStockAsync(string token, long bookId, int quantity, string shelf) =>
             ChangeInventoryAsync(token, HttpMethod.Post, Inventory + "books/" + bookId + "/copies/batch",
                 new InventoryReceiveRequest { Quantity = quantity, ShelfLocation = shelf });
@@ -324,6 +362,7 @@ namespace QuanLyThuVien.Services
         [DataMember(Name = "totalCopies")] public long TotalCopies { get; set; }
         [DataMember(Name = "availableCopies")] public long AvailableCopies { get; set; }
         [DataMember(Name = "onLoanCopies")] public long OnLoanCopies { get; set; }
+        [DataMember(Name = "coverUrl")] public string CoverUrl { get; set; }
         public string VisibleText { get { return IsVisible ? "Hiển thị" : "Đã ẩn"; } }
     }
 
@@ -345,6 +384,14 @@ namespace QuanLyThuVien.Services
         [DataMember(Name = "authorIds")] public System.Collections.Generic.List<long> AuthorIds { get; set; }
         [DataMember(Name = "categoryIds")] public System.Collections.Generic.List<long> CategoryIds { get; set; }
         [DataMember(Name = "isVisible")] public bool IsVisible { get; set; }
+        [DataMember(Name = "coverUrl")] public string CoverUrl { get; set; }
+    }
+
+    [DataContract]
+    public sealed class InventoryCoverUploadResponse : InventoryResponseBase
+    {
+        [DataMember(Name = "message")] public string Message { get; set; }
+        [DataMember(Name = "coverUrl")] public string CoverUrl { get; set; }
     }
 
     [DataContract]

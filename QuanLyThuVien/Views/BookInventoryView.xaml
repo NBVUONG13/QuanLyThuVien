@@ -41,6 +41,13 @@
                         <TextBlock Text="{Binding InventoryMessage}" Foreground="#744E83" TextWrapping="Wrap" FontWeight="Normal" Margin="0,0,0,9"/>
                         <DataGrid ItemsSource="{Binding InventoryBooks}" SelectedItem="{Binding SelectedInventoryBook, Mode=TwoWay}" IsReadOnly="True" AutoGenerateColumns="False" CanUserAddRows="False" CanUserDeleteRows="False" Height="235" SelectionMode="Single" ScrollViewer.HorizontalScrollBarVisibility="Auto">
                             <DataGrid.Columns>
+                                <DataGridTemplateColumn Header="Bìa" Width="68">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <Image Source="{Binding CoverUrl}" Width="38" Height="54" Stretch="Uniform" Margin="3"/>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
                                 <DataGridTextColumn Header="ID" Binding="{Binding BookId}" Width="55"/>
                                 <DataGridTextColumn Header="Tên sách" Binding="{Binding Title}" Width="2*" MinWidth="205"/>
                                 <DataGridTextColumn Header="ISBN" Binding="{Binding Isbn}" Width="140"/>
@@ -52,7 +59,7 @@
                                 <DataGridTextColumn Header="Hiển thị" Binding="{Binding VisibleText}" Width="100"/>
                             </DataGrid.Columns>
                         </DataGrid>
-                        <Expander Header="THÊM / CHỈNH SỬA ĐẦU SÁCH" IsExpanded="False" Margin="0,12,0,14" Padding="10" Background="White" FontWeight="SemiBold">
+                        <Expander Header="THÊM / CHỈNH SỬA ĐẦU SÁCH" IsExpanded="True" Margin="0,12,0,14" Padding="10" Background="White" FontWeight="SemiBold">
                             <StackPanel Margin="9">
                                 <TextBlock Text="{Binding FormBookHeader}" FontSize="16" Foreground="#594075" FontWeight="Bold"/>
                                 <TextBlock Foreground="#3B2C50" Text="Tên sách *" Margin="0,12,0,4"/>
@@ -103,6 +110,29 @@
                                         </ItemsControl.ItemTemplate>
                                     </ItemsControl>
                                 </ScrollViewer>
+                                <TextBlock Foreground="#3B2C50" Text="ẢNH BÌA SÁCH" Margin="0,15,0,7" FontWeight="SemiBold"/>
+                                <Border Background="#F6F3FB" BorderBrush="#DBD2E9" BorderThickness="1"
+                                        CornerRadius="6" Padding="10" Margin="0,0,0,8">
+                                    <DockPanel LastChildFill="True">
+                                        <Border Width="112" Height="148" Background="#EBE6F4" BorderBrush="#D6C9E8"
+                                                BorderThickness="1" CornerRadius="4" DockPanel.Dock="Left" Margin="0,0,14,0">
+                                            <Grid>
+                                                <TextBlock Text="Chưa có ảnh" Foreground="#82768F" FontSize="12"
+                                                           HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                <Image Source="{Binding FormCoverPreview}" Stretch="Uniform" Margin="3"/>
+                                            </Grid>
+                                        </Border>
+                                        <StackPanel VerticalAlignment="Center">
+                                            <Button Content="CHỌN ẢNH BÌA TỪ MÁY" Command="{Binding SelectInventoryCoverCommand}"
+                                                    Style="{StaticResource PurpleButton}" Width="205" Height="36"
+                                                    HorizontalAlignment="Left"/>
+                                            <TextBlock Text="JPG, PNG hoặc WebP • tối đa 5 MB" FontSize="12"
+                                                       Foreground="#786989" Margin="0,9,0,3"/>
+                                            <TextBlock Text="{Binding FormCoverStatus}" TextWrapping="Wrap"
+                                                       Foreground="#594675" MaxWidth="480" FontSize="12"/>
+                                        </StackPanel>
+                                    </DockPanel>
+                                </Border>
                                 <TextBlock Foreground="#3B2C50" Text="Mô tả sách" Margin="0,12,0,4"/>
                                 <TextBox Text="{Binding FormDescription, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" TextWrapping="Wrap" AcceptsReturn="True" MinHeight="80" MaxHeight="160" VerticalScrollBarVisibility="Auto" Padding="8,6"/>
                                 <CheckBox Content="Cho phép hiển thị sách với độc giả (bỏ chọn sẽ ẩn, không xóa lịch sử)" IsChecked="{Binding FormIsVisible, Mode=TwoWay}" Margin="0,13,0,10"/>

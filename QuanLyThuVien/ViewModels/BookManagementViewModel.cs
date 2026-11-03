@@ -12,6 +12,7 @@ using System.Collections.ObjectModel;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Windows.Input;
+using Microsoft.Win32;
 using QuanLyThuVien.Services;
 
 namespace QuanLyThuVien.ViewModels
@@ -164,6 +165,7 @@ namespace QuanLyThuVien.ViewModels
             NewInventoryBookCommand = new ActionCommand(_ => PrepareNextInventoryBook(), _ => CanManage);
             ResetInventoryFormCommand = new ActionCommand(_ => ResetInventoryBook(), _ => CanManage);
             SaveInventoryBookCommand = new AsyncCommand(_ => SaveInventoryBookAsync(), _ => CanManage);
+            SelectInventoryCoverCommand = new ActionCommand(_ => SelectInventoryCover(), _ => CanManage);
             ReceiveStockCommand = new AsyncCommand(_ => ReceiveStockAsync(), _ => CanManage);
             SaveStockCopyCommand = new AsyncCommand(_ => SaveStockCopyAsync(), _ => CanManage);
             ReportLostCommand = new AsyncCommand(_ => ReportIncidentAsync("lost"), _ => CanManage);
@@ -335,6 +337,7 @@ namespace QuanLyThuVien.ViewModels
         public ICommand NewInventoryBookCommand { get; }
         public ICommand ResetInventoryFormCommand { get; }
         public ICommand SaveInventoryBookCommand { get; }
+        public ICommand SelectInventoryCoverCommand { get; }
         public ICommand ReceiveStockCommand { get; }
         public ICommand SaveStockCopyCommand { get; }
         public ICommand ReportLostCommand { get; }
@@ -792,6 +795,48 @@ namespace QuanLyThuVien.ViewModels
         public string FormTitle { get => _formTitle; set => Set(ref _formTitle, value); }
         public string FormIsbn { get => _formIsbn; set => Set(ref _formIsbn, value); }
         public string FormDescription { get => _formDescription; set => Set(ref _formDescription, value); }
+        private string _pendingCoverPath;
+        private string _formCoverPreview = "";
+        private string _formCoverStatus = "Chưa chọn ảnh bìa. Có thể thêm ảnh sau khi tạo sách.";
+        public string FormCoverPreview
+        {
+            get => _formCoverPreview;
+            private set => Set(ref _formCoverPreview, value);
+        }
+        public string FormCoverStatus
+        {
+            get => _formCoverStatus;
+            private set => Set(ref _formCoverStatus, value);
+        }
+        private void SelectInventoryCover()
+        {
+            if (InventoryBusy) return;
+            var dialog = new OpenFileDialog
+            {
+                Title = "Chọn ảnh bìa sách",
+                Filter = "Ảnh bìa (*.jpg;*.jpeg;*.png;*.webp)|*.jpg;*.jpeg;*.png;*.webp",
+                Multiselect = false,
+                CheckFileExists = true
+            };
+            if (dialog.ShowDialog() != true) return;
+            try
+            {
+                var image = new FileInfo(dialog.FileName);
+                if (image.Length < 1 || image.Length > 5L * 1024 * 1024)
+                {
+                    InventoryMessage = "Chỉ chọn ảnh dung lượng tối đa 5 MB.";
+                    return;
+                }
+                _pendingCoverPath = image.FullName;
+                FormCoverPreview = new Uri(image.FullName, UriKind.Absolute).AbsoluteUri;
+                FormCoverStatus = "Đã chọn: " + image.Name + ". Bấm LƯU ĐẦU SÁCH để tải ảnh lên.";
+            }
+            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
+            {
+                InventoryMessage = "Không đọc được ảnh đã chọn.";
+            }
+        }
+
         public string FormPublicationYear { get => _formPublicationYear; set => Set(ref _formPublicationYear, value); }
         public bool FormIsVisible { get => _formIsVisible; set => Set(ref _formIsVisible, value); }
         public ReferenceEntry FormPublisher { get => _formPublisher; set => Set(ref _formPublisher, value); }
@@ -848,6 +893,9 @@ namespace QuanLyThuVien.ViewModels
             FormTitle = "";
             FormIsbn = "";
             FormDescription = "";
+            _pendingCoverPath = null;
+            FormCoverPreview = "";
+            FormCoverStatus = "Chưa chọn ảnh bìa. Có thể thêm ảnh sau khi tạo sách.";
             FormPublicationYear = "";
             FormIsVisible = true;
             StockCopies.Clear();
@@ -917,6 +965,9 @@ namespace QuanLyThuVien.ViewModels
                 FormTitle = b.Title ?? "";
                 FormIsbn = b.Isbn ?? "";
                 FormDescription = b.Description ?? "";
+                _pendingCoverPath = null;
+                FormCoverPreview = b.CoverUrl ?? "";
+                FormCoverStatus = "Ảnh bìa hiện tại. Bấm CHỌN ẢNH để thay thế khi lưu.";
                 FormPublicationYear = b.PublicationYear.HasValue && b.PublicationYear.Value > 0
                     ? b.PublicationYear.Value.ToString() : "";
                 FormPublisher = Publishers.FirstOrDefault(x => x.Id == b.PublisherId);
@@ -965,15 +1016,33 @@ namespace QuanLyThuVien.ViewModels
                 };
                 var result = await _detailApi.SaveInventoryBookAsync(_token, book);
                 if (!string.IsNullOrWhiteSpace(result.Error)) { InventoryMessage = result.Error; return; }
+                long savedId = existingId > 0 ? existingId : result.BookId;
+                if (savedId <= 0)
+                { InventoryMessage = "API không trả mã sách vừa lưu."; return; }
+                if (!string.IsNullOrWhiteSpace(_pendingCoverPath))
+                {
+                    var uploaded = await _detailApi.UploadInventoryCoverAsync(_token, savedId, _pendingCoverPath);
+                    if (!string.IsNullOrWhiteSpace(uploaded.Error))
+                    {
+                        // Avoid creating the book twice when retrying an image after a partial save.
+                        FormBookId = savedId;
+                        InventoryMessage = "Đã lưu sách #" + savedId + " nhưng chưa tải được ảnh: " +
+                            uploaded.Error + " Chọn lại ảnh nếu cần, rồi bấm LƯU ĐẦU SÁCH.";
+                        return;
+                    }
+                    _pendingCoverPath = null;
+                    FormCoverPreview = uploaded.CoverUrl ?? "";
+                    FormCoverStatus = "Ảnh bìa đã được lưu lên API.";
+                }
                 if (existingId == 0)
                 {
                     // For rapid consecutive intake, preserve author/publisher/category choices.
                     PrepareNextInventoryBook();
-                    InventoryMessage = "Đã tạo sách #" + result.BookId + ". Nhập tên và ISBN đầu sách tiếp theo; tác giả/NXB/thể loại giữ nguyên.";
+                    InventoryMessage = "Đã tạo sách #" + savedId + " và lưu ảnh bìa nếu có.";
                 }
                 else
                 {
-                    InventoryMessage = result.Message;
+                    InventoryMessage = "Đã cập nhật sách #" + savedId + " và ảnh bìa nếu có.";
                 }
             }
             catch (Exception) { InventoryMessage = "Không thể lưu thông tin sách."; }

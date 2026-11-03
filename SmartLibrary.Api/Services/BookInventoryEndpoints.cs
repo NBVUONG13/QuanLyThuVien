@@ -61,7 +61,8 @@ public static class BookInventoryEndpoints
                                AND d.closed_at IS NULL)),
                            (SELECT COUNT(*) FROM public.book_copies c WHERE c.book_id=b.book_id
                               AND EXISTS (SELECT 1 FROM public.borrow_details d
-                                WHERE d.book_copy_id=c.copy_id AND d.closed_at IS NULL))
+                                WHERE d.book_copy_id=c.copy_id AND d.closed_at IS NULL)),
+                           COALESCE(b.cover_url,''),COALESCE(b.cover_object_key,'')
                     FROM public.books b LEFT JOIN public.publishers p ON p.publisher_id=b.publisher_id
                     ORDER BY b.book_id DESC LIMIT 500;", db);
                 var data = new List<object>();
@@ -76,7 +77,8 @@ public static class BookInventoryEndpoints
                     isVisible = rd.GetBoolean(5),
                     totalCopies = rd.GetInt64(6),
                     availableCopies = rd.GetInt64(7),
-                    onLoanCopies = rd.GetInt64(8)
+                    onLoanCopies = rd.GetInt64(8),
+                    coverUrl = BookCoverUrlResolver.Resolve(rd.GetString(9), rd.GetString(10), config, app.Environment)
                 });
                 return Results.Ok(new { books = data });
             }
@@ -97,7 +99,8 @@ public static class BookInventoryEndpoints
                            COALESCE((SELECT array_agg(ba.author_id ORDER BY ba.author_id)
                              FROM public.book_authors ba WHERE ba.book_id=b.book_id),'{}'::bigint[]),
                            COALESCE((SELECT array_agg(bc.category_id ORDER BY bc.category_id)
-                             FROM public.book_categories bc WHERE bc.book_id=b.book_id),'{}'::bigint[])
+                             FROM public.book_categories bc WHERE bc.book_id=b.book_id),'{}'::bigint[]),
+                           COALESCE(b.cover_url,''),COALESCE(b.cover_object_key,'')
                     FROM public.books b WHERE b.book_id=@book;", db);
                 cmd.Parameters.AddWithValue("book", bookId);
                 await using var rd = await cmd.ExecuteReaderAsync(ct);
@@ -114,7 +117,8 @@ public static class BookInventoryEndpoints
                         publisherId = rd.IsDBNull(5) ? (long?)null : rd.GetInt64(5),
                         isVisible = rd.GetBoolean(6),
                         authorIds = rd.GetFieldValue<long[]>(7),
-                        categoryIds = rd.GetFieldValue<long[]>(8)
+                        categoryIds = rd.GetFieldValue<long[]>(8),
+                        coverUrl = BookCoverUrlResolver.Resolve(rd.GetString(9), rd.GetString(10), config, app.Environment)
                     }
                 });
             }
@@ -134,6 +138,103 @@ public static class BookInventoryEndpoints
             var denied = Guard(app, req, sessions);
             if (denied is not null) return denied;
             return await SaveBook(app, body, bookId, req, sessions, config, autoEmbeddings, ct);
+        });
+
+        // Staff/Admin upload a real cover image from WPF, not a user-supplied file path/URL.
+        // The filename is generated on the server; no additional NuGet package or table is needed.
+        app.MapPost("/api/inventory/books/{bookId:long}/cover", async (
+            long bookId, HttpRequest req, SessionService sessions, IConfiguration config, CancellationToken ct) =>
+        {
+            var denied = Guard(app, req, sessions);
+            if (denied is not null) return denied;
+
+            const long maxImageBytes = 5L * 1024 * 1024;
+            if (!req.HasFormContentType ||
+                (req.ContentLength.HasValue && req.ContentLength.Value > maxImageBytes + 1048576))
+                return Results.BadRequest(new { message = "Gửi ảnh JPG, PNG hoặc WebP, tối đa 5 MB." });
+
+            IFormFile? cover;
+            try
+            {
+                var form = await req.ReadFormAsync(ct);
+                cover = form.Files.Count == 1 ? form.Files.GetFile("cover") : null;
+            }
+            catch (InvalidDataException)
+            {
+                return Results.BadRequest(new { message = "Dữ liệu ảnh không hợp lệ hoặc quá lớn." });
+            }
+
+            if (cover is null || cover.Length == 0 || cover.Length > maxImageBytes)
+                return Results.BadRequest(new { message = "Chọn đúng một ảnh, dung lượng 1 byte đến 5 MB." });
+            string ext = Path.GetExtension(cover.FileName).ToLowerInvariant();
+            if (ext is not (".jpg" or ".jpeg" or ".png" or ".webp"))
+                return Results.BadRequest(new { message = "Chỉ hỗ trợ ảnh .jpg, .jpeg, .png, .webp." });
+
+            string root = Path.Combine(app.Environment.ContentRootPath, "wwwroot", "covers");
+            string filename = $"book-{bookId}-{Guid.NewGuid():N}{ext}";
+            string filePath = Path.Combine(root, filename);
+            string relativeCoverUrl = "/covers/" + filename;
+            bool committed = false;
+            try
+            {
+                // Check book existence before writing a file; no orphan image for invalid IDs.
+                await using var db = await Connect(config, ct);
+                await using (var exists = new NpgsqlCommand(
+                    "SELECT 1 FROM public.books WHERE book_id=@id;", db))
+                {
+                    exists.Parameters.AddWithValue("id", bookId);
+                    if (await exists.ExecuteScalarAsync(ct) is null) return Results.NotFound();
+                }
+
+                Directory.CreateDirectory(root);
+                await using (var output = new FileStream(filePath, FileMode.CreateNew,
+                    FileAccess.Write, FileShare.None, 81920, useAsync: true))
+                {
+                    await cover.CopyToAsync(output, ct);
+                }
+                // Match file header as well as extension. SVG/HTML/executables are never accepted.
+                if (!ValidCoverHeader(filePath, ext))
+                    return Results.BadRequest(new { message = "Nội dung file không khớp định dạng ảnh đã chọn." });
+
+                await using var tx = await db.BeginTransactionAsync(ct);
+                await using (var update = new NpgsqlCommand(@"
+                    UPDATE public.books SET cover_url=@cover
+                    WHERE book_id=@book RETURNING book_id;", db, tx))
+                {
+                    update.Parameters.AddWithValue("book", bookId);
+                    update.Parameters.AddWithValue("cover", relativeCoverUrl);
+                    if (await update.ExecuteScalarAsync(ct) is null)
+                        return Results.NotFound();
+                }
+                await Audit(db, tx, sessions.Validate(Bearer(req))!.UserId,
+                    "book_cover_updated", "books", bookId.ToString(),
+                    new { coverUrl = relativeCoverUrl }, ct);
+                await tx.CommitAsync(ct);
+                committed = true;
+                // New filename avoids stale image caches on home, search, and details.
+                return Results.Ok(new
+                {
+                    message = "Đã cập nhật ảnh bìa sách.",
+                    coverUrl = BookCoverUrlResolver.Resolve(relativeCoverUrl, null, config, app.Environment)
+                });
+            }
+            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
+            {
+                app.Logger.LogWarning("Cover storage failed: {Type}", ex.GetType().Name);
+                return Results.Json(new { message = "Không thể lưu ảnh. Kiểm tra quyền ghi wwwroot/covers." }, statusCode: 503);
+            }
+            catch (Exception ex)
+            {
+                return Failed(app, ex, "Không cập nhật được ảnh bìa.");
+            }
+            finally
+            {
+                // Failed requests cannot leave an unreferenced uploaded file.
+                if (!committed && File.Exists(filePath))
+                {
+                    try { File.Delete(filePath); } catch (IOException) { }
+                }
+            }
         });
 
         // Server-generated unique copy codes; never change a physical quantity counter by hand.
@@ -449,6 +550,20 @@ public static class BookInventoryEndpoints
         catch (PostgresException e) when (e.SqlState == PostgresErrorCodes.ForeignKeyViolation)
         { return Results.BadRequest(new { message = "NXB/tác giả/thể loại không tồn tại. Tải lại danh mục." }); }
         catch (Exception ex) { return Failed(app, ex, "Không lưu được đầu sách."); }
+    }
+
+    private static bool ValidCoverHeader(string path, string extension)
+    {
+        Span<byte> header = stackalloc byte[12];
+        using var stream = File.OpenRead(path);
+        if (stream.Read(header) < header.Length) return false;
+        if (extension is ".jpg" or ".jpeg")
+            return header[0] == 0xFF && header[1] == 0xD8 && header[2] == 0xFF;
+        if (extension == ".png")
+            return header[..8].SequenceEqual(new byte[] { 137, 80, 78, 71, 13, 10, 26, 10 });
+        if (extension == ".webp")
+            return header[..4].SequenceEqual("RIFF"u8) && header[8..12].SequenceEqual("WEBP"u8);
+        return false;
     }
 
     private static void SetBookParams(NpgsqlCommand cmd, BookEditRequest body,
