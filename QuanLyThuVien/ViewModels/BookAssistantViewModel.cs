@@ -23,6 +23,7 @@ namespace QuanLyThuVien.ViewModels
         private string _status = "Hỏi về sách, hạn trả hoặc nghiệp vụ theo quyền tài khoản.";
         private bool _busy;
         private BookAssistantSuggestion _selectedBook;
+        private long _lastReferencedBookId;
 
         public BookAssistantViewModel(string token)
         {
@@ -66,40 +67,8 @@ namespace QuanLyThuVien.ViewModels
             set { Set(ref _selectedBook, value); }
         }
 
-        // A live loan/due-date/fine question never receives an old or random catalog list.
-        // Default is hidden: show cards only for explicit book discovery/recommendations.
-        private static bool IsBookDiscoveryQuestion(string question)
-        {
-            string q = NormalizeQuestion(question);
-            if (ContainsAny(q, "dang muon", "dang giu", "han tra", "het han",
-                "qua han", "tien phat", "no phat", "lich su muon",
-                "don muon", "gia han", "cham cong", "bang luong",
-                "doc gia", "nhan vien", "thong bao", "tra sach")) return false;
-            return ContainsAny(q,
-                "goi y", "nen doc", "muon doc", "muon hoc", "sach nao hay",
-                "tim sach", "co sach nao", "sach giong", "sach tuong tu",
-                "gioi thieu sach", "gioi thieu the loai", "tu van sach",
-                "the loai", "tac gia", "trinh tham", "lap trinh", "thuat toan",
-                "truyen ve", "sach ve", "van hoc", "tieu thuyet", "kinh di");
-        }
-
-        private static bool ContainsAny(string q, params string[] patterns)
-        {
-            foreach (string pattern in patterns)
-                if (q.Contains(pattern)) return true;
-            return false;
-        }
-
-        private static string NormalizeQuestion(string question)
-        {
-            string raw = (question ?? "").ToLowerInvariant().Replace('đ', 'd')
-                .Normalize(NormalizationForm.FormD);
-            var sb = new StringBuilder(raw.Length);
-            foreach (char c in raw)
-                if (CharUnicodeInfo.GetUnicodeCategory(c) != UnicodeCategory.NonSpacingMark)
-                    sb.Append(c);
-            return sb.ToString().Normalize(NormalizationForm.FormC);
-        }
+        // Book cards are driven by validated API suggestions, not WPF keyword checks.
+        // This also allows natural Vietnamese questions about a particular book.
 
         public async Task AskAsync()
         {
@@ -119,7 +88,7 @@ namespace QuanLyThuVien.ViewModels
             Status = "Đang tra cứu dữ liệu thư viện...";
             try
             {
-                var result = await _api.AskAsync(_token, question);
+                var result = await _api.AskAsync(_token, question, _lastReferencedBookId);
                 if (!result.IsSuccess)
                 {
                     Status = result.Message;
@@ -133,9 +102,13 @@ namespace QuanLyThuVien.ViewModels
                     Body = response.Reply ?? "Không có nội dung trả lời."
                 });
                 Suggestions.Clear();
-                if (response.Suggestions != null && IsBookDiscoveryQuestion(question))
+                // Only the authenticated API decides which book cards are valid.
+                // Live stock answers also return the confirmed book, so the reader can
+                // open its detail or locate its shelf; private loan answers return none.
+                if (response.Suggestions != null)
                     foreach (var book in response.Suggestions) Suggestions.Add(book);
                 SelectedBook = Suggestions.Count > 0 ? Suggestions[0] : null;
+                if (Suggestions.Count == 1) _lastReferencedBookId = Suggestions[0].BookId;
                 Status = response.Note ?? "Đã tra cứu xong.";
             }
             catch (Exception)
@@ -179,6 +152,7 @@ namespace QuanLyThuVien.ViewModels
     internal sealed class BookAssistantRequest
     {
         [DataMember(Name = "question")] public string Question { get; set; }
+        [DataMember(Name = "contextBookId", EmitDefaultValue = false)] public long ContextBookId { get; set; }
     }
 
     internal sealed class BookAssistantResult
@@ -191,15 +165,15 @@ namespace QuanLyThuVien.ViewModels
     internal sealed class BookAssistantApiClient
     {
         private const string Url = "http://127.0.0.1:5082/api/reader/book-assistant/chat";
-        private static readonly HttpClient Client = new HttpClient { Timeout = TimeSpan.FromSeconds(60) };
-        public async Task<BookAssistantResult> AskAsync(string token, string question)
+        private static readonly HttpClient Client = new HttpClient { Timeout = TimeSpan.FromSeconds(110) };
+        public async Task<BookAssistantResult> AskAsync(string token, string question, long contextBookId = 0)
         {
             try
             {
                 var json = new DataContractJsonSerializer(typeof(BookAssistantRequest));
                 using (var stream = new MemoryStream())
                 {
-                    json.WriteObject(stream, new BookAssistantRequest { Question = question });
+                    json.WriteObject(stream, new BookAssistantRequest { Question = question, ContextBookId = contextBookId });
                     using (var request = new HttpRequestMessage(HttpMethod.Post, Url))
                     {
                         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);

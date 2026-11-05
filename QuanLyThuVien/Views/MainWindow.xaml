@@ -73,7 +73,7 @@
                     <TextBlock Text="SMART LIBRARY" Foreground="White" FontSize="21" FontWeight="Bold" Margin="4,0,0,5"/>
                     <TextBlock Text="THƯ VIỆN CỦA BẠN" Foreground="#B8A9D4" FontSize="11" Margin="4,0,0,30"/>
                     <Button Style="{StaticResource SideButton}" Content="⌂  Trang chủ" Command="{Binding HomeCommand}"/>
-                    <Button Style="{StaticResource SideButton}" Content="⌖  SƠ ĐỒ THƯ VIỆN 2D" Command="{Binding MapCommand}" ToolTip="Tìm sách, vị trí kệ và chỉ đường 2D"/>
+                    <Button Style="{StaticResource SideButton}" Content="⌖  Sơ đồ thư viện" Command="{Binding MapCommand}" ToolTip="Tìm sách, vị trí kệ và chỉ đường 2D"/>
                     <Button Style="{StaticResource SideButton}" Content="▦  Thống kê thư viện" Command="{Binding DashboardCommand}"/>
                     <StackPanel Visibility="{Binding IsReader, Converter={StaticResource BoolVisibility}}">
                         <Button Style="{StaticResource SideButton}" Command="{Binding ReaderCommand}">
@@ -82,26 +82,26 @@
                                 <TextBlock Text="Hồ sơ của tôi"/>
                             </StackPanel>
                         </Button>
-                        <Button Style="{StaticResource SideButton}" Content="ĐẶT ĐƠN MƯỢN SÁCH" Command="{Binding RequestsCommand}" ToolTip="Xem danh mục, chọn 1-5 đầu sách và gửi yêu cầu"/>
-                        <Button Style="{StaticResource SideButton}" Content="MƯỢN &amp; GIA HẠN" Command="{Binding LoansCommand}"
+                        <Button Style="{StaticResource SideButton}" Content="Đặt đơn mượn" Command="{Binding RequestsCommand}" ToolTip="Xem danh mục, chọn 1-5 đầu sách và gửi yêu cầu"/>
+                        <Button Style="{StaticResource SideButton}" Content="Mượn &amp; Gia hạn" Command="{Binding LoansCommand}"
                                 ToolTip="Đơn đã đặt, lịch sử mượn/trả và yêu cầu gia hạn trong 3 tab"/>
                         <Button Style="{StaticResource SideButton}" Content="Tiền phạt" Command="{Binding FinesCommand}"/>
                     </StackPanel>
                     <StackPanel Visibility="{Binding CanManage, Converter={StaticResource BoolVisibility}}">
-                        <Button Style="{StaticResource SideButton}" Content="📚  QUẢN LÝ SÁCH &amp; KHO" Command="{Binding InventoryCommand}" ToolTip="Thêm/sửa đầu sách, nhập kho, quản lý tác giả, thể loại, NXB và xử lý mất/hỏng"/>
+                        <Button Style="{StaticResource SideButton}" Content="📚  Quản lý sách &amp; Kho" Command="{Binding InventoryCommand}" ToolTip="Thêm/sửa đầu sách, nhập kho, quản lý tác giả, thể loại, NXB và xử lý mất/hỏng"/>
                         <TextBlock Text="NGHIỆP VỤ" Foreground="#BAABD6" Margin="12,24,0,8" FontSize="11"/>
                         <Button Style="{StaticResource SideButton}" Content="Quản lý độc giả" Command="{Binding ReaderCommand}"/>
-                        <Button Style="{StaticResource SideButton}" Content="★ DUYỆT ĐƠN MƯỢN" Command="{Binding RequestsCommand}" ToolTip="Danh sách yêu cầu Reader gửi; xem hồ sơ, duyệt hoặc từ chối."/>
-                        <Button Style="{StaticResource SideButton}" Content="TIẾP NHẬN TẠI QUẦY" Command="{Binding CounterCommand}" ToolTip="Chuyển Hồ sơ cũ / Guest mới và tạo đơn tại quầy."/>
-                        <Button Style="{StaticResource SideButton}" Content="THU TIỀN PHẠT" Command="{Binding FinesCommand}" ToolTip="Xem tiền phạt và ghi nhận thanh toán tại quầy."/>
-                        <Button Style="{StaticResource SideButton}" Content="LỊCH SỬ / TRẢ SÁCH" Command="{Binding LoansCommand}" ToolTip="Chỉ xem lịch sử phiếu mượn và ghi nhận trả cuốn."/>
-                        <Button Style="{StaticResource SideButton}" Content="CHẤM CÔNG" Command="{Binding AttendanceCommand}" ToolTip="Staff check-in/check-out; Admin xem các ca làm"/>
+                        <Button Style="{StaticResource SideButton}" Content="★ Duyệt đơn mượn" Command="{Binding RequestsCommand}" ToolTip="Danh sách yêu cầu Reader gửi; xem hồ sơ, duyệt hoặc từ chối."/>
+                        <Button Style="{StaticResource SideButton}" Content="Tiếp nhận tại quầy" Command="{Binding CounterCommand}" ToolTip="Chuyển Hồ sơ cũ / Guest mới và tạo đơn tại quầy."/>
+                        <Button Style="{StaticResource SideButton}" Content="Thu tiền phạt" Command="{Binding FinesCommand}" ToolTip="Xem tiền phạt và ghi nhận thanh toán tại quầy."/>
+                        <Button Style="{StaticResource SideButton}" Content="Lịch sử / Trả sách" Command="{Binding LoansCommand}" ToolTip="Chỉ xem lịch sử phiếu mượn và ghi nhận trả cuốn."/>
+                        <Button Style="{StaticResource SideButton}" Content="Chấm công" Command="{Binding AttendanceCommand}" ToolTip="Staff check-in/check-out; Admin xem các ca làm"/>
                     </StackPanel>
                     <StackPanel Visibility="{Binding IsAdmin, Converter={StaticResource BoolVisibility}}">
                         <TextBlock Text="QUẢN TRỊ" Foreground="#BAABD6" Margin="12,24,0,8" FontSize="11"/>
                         <Button Style="{StaticResource SideButton}" Content="Quản lý nhân viên" Command="{Binding StaffCommand}"/>
                         <Button Style="{StaticResource SideButton}" Content="Chính sách thư viện" Command="{Binding PolicyCommand}"/>
-                        <Button Style="{StaticResource SideButton}" Content="BÁO CÁO QUẢN TRỊ" Command="{Binding ReportsCommand}" ToolTip="Thống kê mượn/trả, kho và tiền phạt theo khoảng ngày"/>
+                        <Button Style="{StaticResource SideButton}" Content="Báo cáo quản trị" Command="{Binding ReportsCommand}" ToolTip="Thống kê mượn/trả, kho và tiền phạt theo khoảng ngày"/>
 
                     </StackPanel>
                 </StackPanel>

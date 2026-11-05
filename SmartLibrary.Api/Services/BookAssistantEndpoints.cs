@@ -24,6 +24,9 @@ public static class BookAssistantEndpoints
     public sealed class BookQuestion
     {
         public string? Question { get; set; }
+        // Optional book from the preceding assistant turn, used for "quyển đó".
+        // Always resolved against the current visible catalog, never trusted as stock.
+        public long ContextBookId { get; set; }
     }
 
     private sealed record BookResult(long BookId, string Title, string Author, string Category,
@@ -48,15 +51,104 @@ public static class BookAssistantEndpoints
 
             try
             {
+                // Reject credentials/identifiers before contacting the optional local model.
+                string normalizedQuestionForSafety = Normalize(question);
+                if (ContainsAny(normalizedQuestionForSafety, "mat khau", "password", "cccd",
+                    "can cuoc", "otp", "ma xac minh", "so dien thoai"))
+                    return Results.Ok(new
+                    {
+                        reply = "Trợ lý không cung cấp hoặc xử lý mật khẩu, CCCD, OTP hay dữ liệu liên hệ riêng tư.",
+                        aiUsed = false,
+                        note = "Thông tin nhạy cảm không được gửi tới AI.",
+                        suggestions = Array.Empty<object>()
+                    });
+
+                // The model UNDERSTANDS Vietnamese and extracts intent/book mention.
+                // It never writes SQL or chooses authorization rules. Failure falls back
+                // to the deterministic parser below.
+                var interpreted = await BookQuestionInterpreter.InterpretAsync(question, actor.Role, config, ct);
                 string cs = config.GetConnectionString("AivenPostgres") ??
                     throw new InvalidOperationException("Missing AivenPostgres connection string");
                 var catalog = new List<BookResult>();
                 await using (var db = new NpgsqlConnection(cs))
                 {
                     await db.OpenAsync(ct);
+                    // Interpret natural-language requests with Qwen3.5 first; every fact is
+                    // then obtained by a fixed read-only query with server-side role checks.
+                    // The fallback only covers unambiguous statistics when model parsing fails.
+                    string? insightIntent = LibraryAssistantInsights.ResolveIntent(
+                        interpreted?.Intent, question);
+                    var insight = await LibraryAssistantInsights.TryAnswerAsync(
+                        insightIntent, actor.Role, actor.UserId, db, ct);
+                    if (insight is not null)
+                        return Results.Ok(new
+                        {
+                            reply = insight.Reply,
+                            aiUsed = interpreted != null,
+                            note = "AI nhận diện yêu cầu; bảng xếp hạng và thống kê được truy vấn trực tiếp từ Aiven theo quyền tài khoản.",
+                            suggestions = insight.Suggestions
+                        });
                     // Sensitive operational facts are calculated in PostgreSQL and returned
                     // directly, NOT interpreted/guessed by the small local model.
-                    var facts = await AnswerOperationalQuestionAsync(question, actor.Role, actor.UserId, db, ct);
+                    // Convert model intent to a fixed, authorized read-only query.
+                    // It cannot invent a SQL query, impersonate another Reader or see credentials.
+                    string? canonical = CanonicalOperationalQuestion(interpreted?.Intent);
+                    if (canonical != null)
+                    {
+                        string? response = await AnswerOperationalQuestionAsync(canonical,
+                            actor.Role, actor.UserId, db, ct);
+                        return Results.Ok(new
+                        {
+                            reply = response ?? "Yêu cầu này chưa có truy vấn được hỗ trợ theo quyền của bạn.",
+                            aiUsed = interpreted != null,
+                            note = "AI phân tích ý định; dữ liệu nghiệp vụ lấy từ PostgreSQL theo phân quyền.",
+                            suggestions = Array.Empty<object>()
+                        });
+                    }
+                    if (interpreted?.Intent == "unsupported")
+                    {
+                        // If the model mislabeled an existing authenticated operation,
+                        // prefer the already-implemented parameterized DB query.
+                        string? knownFact = await AnswerOperationalQuestionAsync(
+                            question, actor.Role, actor.UserId, db, ct);
+                        if (knownFact is not null)
+                            return Results.Ok(new
+                            {
+                                reply = knownFact,
+                                aiUsed = false,
+                                note = "Tra cứu trực tiếp từ PostgreSQL theo phiên đăng nhập.",
+                                suggestions = Array.Empty<object>()
+                            });
+                        // Unsupported DATABASE operations cannot be guessed by the LLM.
+                        // Ordinary natural-language help/questions can still be answered.
+                        bool needsLiveData = LibraryAssistantInsights.LooksLikeUnmappedDataRequest(question);
+                        string? explanation = needsLiveData ? null :
+                            await BookQuestionInterpreter.GeneralAnswerAsync(question, actor.Role, config, ct);
+                        return Results.Ok(new
+                        {
+                            reply = explanation ?? (needsLiveData
+                                ? "Mình hiểu bạn đang hỏi dữ liệu hoạt động của thư viện, nhưng chưa có truy vấn xác thực cho chỉ số này. Hãy dùng trang Báo cáo/Quản lý tương ứng; mình không đoán số liệu hoặc tiết lộ dữ liệu ngoài quyền."
+                                : "Mình có thể giải thích cách dùng thư viện, tìm sách, gợi ý theo nội dung và tra cứu nghiệp vụ theo quyền. Bạn mô tả rõ điều cần làm nhé."),
+                            aiUsed = explanation != null,
+                            note = "Không cho model tự viết SQL hay thực hiện thao tác thay đổi dữ liệu.",
+                            suggestions = Array.Empty<object>()
+                        });
+                    }
+                    if (interpreted?.Intent == "general")
+                    {
+                        var general = await BookQuestionInterpreter.GeneralAnswerAsync(question, actor.Role, config, ct);
+                        return Results.Ok(new
+                        {
+                            reply = general ?? "Mình hỗ trợ tìm sách, xem số cuốn sẵn sàng, tìm sách theo chủ đề, tra hạn trả và tiền phạt theo quyền đăng nhập. Bạn muốn hỏi phần nào?",
+                            aiUsed = general != null,
+                            note = general != null ? "Qwen3.5 giải đáp câu hỏi chung; không suy đoán dữ liệu kho." : "Đang dùng hướng dẫn có sẵn vì AI chat chưa phản hồi.",
+                            suggestions = Array.Empty<object>()
+                        });
+                    }
+                    // Retain deterministic support if the model is offline or cannot parse a question.
+                    string? facts = interpreted is null
+                        ? await AnswerOperationalQuestionAsync(question, actor.Role, actor.UserId, db, ct)
+                        : null;
                     if (facts != null)
                         return Results.Ok(new
                         {
@@ -94,13 +186,34 @@ public static class BookAssistantEndpoints
                 // contains the generic word "sách". A catalog-only prompt cannot answer
                 // who is currently borrowing or when this Reader must return books.
                 string normalizedIntent = Normalize(question);
-                bool stockIntentBeforeCatalog = IsBookStockIntent(normalizedIntent);
-                bool discoveryIntent = stockIntentBeforeCatalog || IsDiscoveryIntent(normalizedIntent) ||
-                    (!IsOperationalIntent(normalizedIntent) &&
-                     catalog.Any(b => !string.IsNullOrWhiteSpace(b.Title) &&
-                        normalizedIntent.Contains(Normalize(b.Title), StringComparison.Ordinal)));
-                if (IsOperationalIntent(normalizedIntent) && !IsExplicitRecommendationIntent(normalizedIntent)
-                    && !stockIntentBeforeCatalog)
+                // Match the name as a reader would say it: punctuation/subtitles are optional,
+                // and a harmless connector such as "đến" may be left out. Resolve against
+                // the live catalog, NEVER infer inventory from the language model.
+                // The model extracts a colloquial title mention; the server still
+                // validates it against REAL catalog titles before reporting stock.
+                var mentionedBooks = MatchBookTitles(interpreted?.BookTitle ?? question, catalog);
+                if (mentionedBooks.Count == 0 && !string.IsNullOrWhiteSpace(interpreted?.BookTitle))
+                    mentionedBooks = MatchBookTitles(question, catalog);
+                // Use the previous book ONLY for a clear "that book" follow-up.
+                // A new unknown title must never inherit an old book's stock count.
+                if (mentionedBooks.Count == 0 && string.IsNullOrWhiteSpace(interpreted?.BookTitle) &&
+                    (interpreted?.Intent is "stock" or "similar") && body?.ContextBookId > 0 &&
+                    ContainsAny(normalizedIntent, "quyen do", "cuon do", "sach do", "truyen do",
+                        "quyen ay", "cuon ay", "sach ay", "truyen ay",
+                        "cuon nay", "quyen nay", "the con", "vay con", "no con"))
+                {
+                    var priorBook = catalog.FirstOrDefault(b => b.BookId == body.ContextBookId);
+                    if (priorBook != null) mentionedBooks.Add(priorBook);
+                }
+                bool conversationalStockIntent = mentionedBooks.Count > 0 &&
+                    Regex.IsMatch(normalizedIntent, @"\bcon\b.{0,120}\bkhong\b");
+                bool stockIntentBeforeCatalog = interpreted?.Intent == "stock" ||
+                    (interpreted == null && (IsBookStockIntent(normalizedIntent) || conversationalStockIntent));
+                bool discoveryIntent = interpreted?.Intent is "stock" or "discover" or "similar" ||
+                    (interpreted == null && (stockIntentBeforeCatalog || IsDiscoveryIntent(normalizedIntent) ||
+                     (!IsOperationalIntent(normalizedIntent) && mentionedBooks.Count > 0)));
+                if (interpreted == null && IsOperationalIntent(normalizedIntent) &&
+                    !IsExplicitRecommendationIntent(normalizedIntent) && !stockIntentBeforeCatalog)
                     discoveryIntent = false;
                 if (!discoveryIntent)
                 {
@@ -112,7 +225,7 @@ public static class BookAssistantEndpoints
                     return Results.Ok(new
                     {
                         reply = help,
-                        aiUsed = false,
+                        aiUsed = interpreted != null,
                         note = "Câu hỏi chưa có truy vấn xác thực phù hợp; không tự gợi ý sách.",
                         suggestions = Array.Empty<object>()
                     });
@@ -121,14 +234,15 @@ public static class BookAssistantEndpoints
                 // Semantic search is an OPTIONAL supplement to the existing keyword ranking.
                 // It is never used for personal loans, fines or book-stock facts.
                 string normalizedQuestion = Normalize(question);
-                bool stockIntent = IsBookStockIntent(normalizedQuestion);
-                bool similarIntent = ContainsAny(normalizedQuestion, "sach giong", "sach tuong tu",
+                bool stockIntent = stockIntentBeforeCatalog;
+                bool similarIntent = interpreted?.Intent == "similar" ||
+                    ContainsAny(normalizedQuestion, "sach giong", "sach tuong tu",
                     "truyen giong", "truyen tuong tu", "giong cuon", "tuong tu cuon");
-                BookResult? sourceBook = similarIntent ? catalog
-                    .Where(b => !string.IsNullOrWhiteSpace(b.Title) &&
-                        normalizedQuestion.Contains(Normalize(b.Title), StringComparison.Ordinal))
-                    .OrderByDescending(b => b.Title.Length).FirstOrDefault() : null;
-                string semanticQuery = sourceBook is null ? question :
+                BookResult? sourceBook = similarIntent && mentionedBooks.Count == 1
+                    ? mentionedBooks[0] : null;
+                string semanticQuery = sourceBook is null
+                    ? (!string.IsNullOrWhiteSpace(interpreted?.SearchQuery) ? interpreted.SearchQuery : question)
+                    :
                     "Sách có nội dung, chủ đề, thể loại tương tự: " + sourceBook.Title + ". " +
                     sourceBook.Category + ". " + sourceBook.Description;
                 IReadOnlyList<SemanticBookEndpoints.SemanticMatch>? semantic = stockIntent ? null :
@@ -143,12 +257,14 @@ public static class BookAssistantEndpoints
                     .Any(t => Normalize(question).Contains(t, StringComparison.Ordinal));
                 bool wantsNew = new[] { "moi", "gan day", "xuat ban" }
                     .Any(t => Normalize(question).Contains(t, StringComparison.Ordinal));
+                var mentionedIds = mentionedBooks.Select(b => b.BookId).ToHashSet();
                 var ranked = catalog
                     .Where(b => sourceBook is null || b.BookId != sourceBook.BookId)
                     .Select(b => new
                     {
                         Book = b,
                         Score = Score(b, terms, wantsPopular, wantsNew) +
+                            (mentionedIds.Contains(b.BookId) ? 150 : 0) +
                             (semanticScores.TryGetValue(b.BookId, out var score) ? score * 18 : 0)
                     })
                     .OrderByDescending(x => x.Score).ThenByDescending(x => x.Book.RecentBorrows)
@@ -160,12 +276,9 @@ public static class BookAssistantEndpoints
                 // Never guess from a partial/fuzzy match and claim an exact quantity.
                 if (stockIntent)
                 {
-                    var exact = catalog.Where(b => !string.IsNullOrWhiteSpace(b.Title) &&
-                        normalizedQuestion.Contains(Normalize(b.Title), StringComparison.Ordinal))
-                        .OrderByDescending(b => b.Title.Length).ToArray();
-                    if (exact.Length == 1)
+                    if (mentionedBooks.Count == 1)
                     {
-                        var book = exact[0];
+                        var book = mentionedBooks[0];
                         string? nextDue = await NextDueAsync(config, book.BookId, ct);
                         string result = $"{book.Title}: hiện còn {book.AvailableCopies} cuốn có thể mượn." +
                             (book.AvailableCopies == 0 ? (nextDue is null
@@ -175,21 +288,36 @@ public static class BookAssistantEndpoints
                         return Results.Ok(new
                         {
                             reply = result,
-                            aiUsed = false,
-                            note = "Tồn kho và hạn trả lấy trực tiếp từ PostgreSQL.",
+                            aiUsed = interpreted != null,
+                            note = "AI hiểu câu hỏi; số cuốn và hạn trả lấy trực tiếp từ PostgreSQL.",
                             suggestions = new[] { new { bookId = book.BookId, title = book.Title,
                                 author = book.Author, category = book.Category,
                                 publicationYear = book.PublicationYear,
                                 availableCopies = book.AvailableCopies, recentBorrows = book.RecentBorrows } }
                         });
                     }
+                    // Multiple plausible titles: ask for a choice, not a guessed quantity.
+                    // No title match: offer an actionable clarification.
                     return Results.Ok(new
                     {
-                        reply = "Hãy ghi rõ tên đầu sách chính xác để mình kiểm tra tồn kho hoặc hạn trả. " +
-                        "Nếu chưa nhớ tên, bạn có thể tìm sách theo thể loại hay tác giả trước.",
-                        aiUsed = false,
-                        note = "Cần xác định đúng đầu sách, không đoán số lượng.",
-                        suggestions = Array.Empty<object>()
+                        reply = mentionedBooks.Count > 1
+                            ? "Có một vài đầu sách có tên gần giống nhau: " +
+                              string.Join("; ", mentionedBooks.Select(b => b.Title)) +
+                              ". Bạn chọn đúng đầu sách để mình kiểm tra còn bao nhiêu cuốn nhé."
+                            : "Mình chưa xác định được đầu sách bạn muốn hỏi trong danh mục hiện có. " +
+                              "Bạn thử viết thêm vài từ trong tên sách nhé, mình có thể nhận tên rút gọn.",
+                        aiUsed = interpreted != null,
+                        note = "Không suy đoán số cuốn từ tên sách chưa được xác định.",
+                        suggestions = mentionedBooks.Take(5).Select(b => new
+                        {
+                            bookId = b.BookId,
+                            title = b.Title,
+                            author = b.Author,
+                            category = b.Category,
+                            publicationYear = b.PublicationYear,
+                            availableCopies = b.AvailableCopies,
+                            recentBorrows = b.RecentBorrows
+                        }).ToArray()
                     });
                 }
                 var list = suggestions.Select(b => new
@@ -230,6 +358,91 @@ public static class BookAssistantEndpoints
 
     // Normalize() strips Vietnamese diacritics, then match colloquial expressions.
     // Keep this read-only routing independent of the local LLM's interpretation.
+    // Prefer exact phrases and sufficiently distinctive variants; do not let an
+    // approximate semantic similarity score become a claim of live stock.
+    // Titles are matched only against visible catalog rows returned from PostgreSQL.
+    private static List<BookResult> MatchBookTitles(string question, List<BookResult> catalog)
+    {
+        string queryWords = " " + NormalizeWords(question) + " ";
+        var ranked = catalog
+            .Select(b => new { Book = b, Strength = TitleMentionStrength(queryWords, b.Title) })
+            .Where(x => x.Strength > 0)
+            .OrderByDescending(x => x.Strength)
+            .ThenByDescending(x => x.Book.Title.Length)
+            .ToList();
+        if (ranked.Count == 0) return new List<BookResult>();
+
+        // When two catalog records fit the same spoken title just as well, ask
+        // the reader to choose; do not fabricate the quantity for one edition.
+        int best = ranked[0].Strength;
+        return ranked.Where(x => x.Strength >= best - 30)
+            .Take(5).Select(x => x.Book).ToList();
+    }
+
+    private static int TitleMentionStrength(string paddedQuery, string title)
+    {
+        if (string.IsNullOrWhiteSpace(title)) return 0;
+        var variants = new List<(string Text, int Priority)> { (title, 4000) };
+        int colon = title.IndexOf(':');
+        if (colon > 0) variants.Add((title[..colon], 3000));
+        int dash = title.LastIndexOf(" - ", StringComparison.Ordinal);
+        if (dash >= 0 && dash + 3 < title.Length)
+        {
+            variants.Add((title[..dash], 2900));
+            variants.Add((title[(dash + 3)..], 2850));
+        }
+        int best = 0;
+        foreach (var variant in variants)
+        {
+            string words = NormalizeWords(variant.Text);
+            string[] titleWords = ContentWords(words);
+            if (titleWords.Length < 2 || words.Length < 5) continue;
+            if (paddedQuery.Contains(" " + words + " ", StringComparison.Ordinal))
+                best = Math.Max(best, variant.Priority + words.Length);
+
+            // Flexible Vietnamese title: tolerate particles, punctuation and subtitle.
+            // The coverage threshold prevents a vague topic like "truyện hay" from
+            // being misrepresented as a specific title and stock count.
+            string[] queryWords = ContentWords(paddedQuery);
+            int common = titleWords.Intersect(queryWords, StringComparer.Ordinal).Count();
+            if (common >= 2 && common >= Math.Ceiling(titleWords.Length * 0.75) &&
+                common >= Math.Ceiling(queryWords.Length * 0.55))
+                best = Math.Max(best, variant.Priority - 600 + common * 25);
+        }
+        return best;
+    }
+
+    private static string NormalizeWords(string value) =>
+        Regex.Replace(Normalize(value), @"[^\p{L}\p{N}]+", " ").Trim();
+
+    private static readonly HashSet<string> TitleParticles = new(StringComparer.Ordinal)
+    {
+        "den", "la", "mot", "nhung", "cua", "sach", "quyen", "cuon", "truyen",
+        "dai", "tap", "cho", "toi", "minh", "ban", "co", "khong", "con", "may",
+        "bao", "nhieu", "nao", "san", "trong", "thu", "vien", "ve", "muon", "doc",
+        "giup", "hoi", "kiem", "tra", "duoc", "nhe", "vay", "the", "hay"
+    };
+
+    private static string[] ContentWords(string value) =>
+        NormalizeWords(value).Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            .Where(x => x.Length >= 2 && !TitleParticles.Contains(x))
+            .Distinct(StringComparer.Ordinal).ToArray();
+
+    // Model output is only a ROUTING hint. These canonical questions select
+    // existing, parameterized, role-checked read-only database operations.
+    private static string? CanonicalOperationalQuestion(string? intent) => intent switch
+    {
+        "personal_loans" => "toi dang muon cuon nao han tra khi nao",
+        "loan_history" => "lich su muon",
+        "personal_fines" => "tien phat",
+        "renew" => "xin gia han",
+        "overdue_readers" => "ai qua han",
+        "library_stats" => "tong dau sach",
+        "reader_count" => "bao nhieu doc gia",
+        "unpaid_fines" => "tong tien phat",
+        _ => null
+    };
+
     private static bool IsExplicitRecommendationIntent(string q) => ContainsAny(q,
         "goi y", "tu van sach", "nen doc", "sach tuong tu", "sach giong",
         "tim sach", "sach nao hay", "truyen nao hay", "muon doc", "muon hoc",
@@ -259,9 +472,10 @@ public static class BookAssistantEndpoints
     }
 
     private static bool IsBookStockIntent(string q) => ContainsAny(q,
-        "con sach", "con khong", "con may", "bao nhieu cuon", "bao nhieu quyen",
-        "con bao nhieu", "khi nao co", "bao gio co", "het sach",
-        "sach co san", "co san khong", "du sach", "con cuon nao") ||
+        "con sach", "con truyen", "con quyen", "con cuon", "con khong", "con may",
+        "co sach", "co quyen", "co cuon", "co truyen", "bao nhieu cuon", "bao nhieu quyen",
+        "con bao nhieu", "khi nao co", "bao gio co", "het sach", "het cuon",
+        "sach co san", "co san", "san khong", "du sach", "con cuon nao") ||
         (ContainsAny(q, "han tra gan nhat", "ngay tra gan nhat", "ngay tra sap toi") &&
          !ContainsAny(q, "cua toi", "cua minh", "toi dang", "minh dang", "t dang"));
 
