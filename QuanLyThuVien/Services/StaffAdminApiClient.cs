@@ -13,8 +13,8 @@ namespace QuanLyThuVien.Services
 {
     public sealed class StaffAdminApiClient
     {
-        private const string Url = "http://127.0.0.1:5082/api/admin/staff";
-        private static readonly HttpClient Http = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+        private static readonly string Url = global::QuanLyThuVien.App.ApiBaseUrl + "/api/admin/staff";
+        private static readonly HttpClient Http = new HttpClient { Timeout = TimeSpan.FromSeconds(90) };
         public async Task<StaffListResult> ListAsync(string token)
         {
             try
@@ -58,7 +58,7 @@ namespace QuanLyThuVien.Services
         }
 
         // Step 79: Staff sees own shifts; Admin sees all shifts. Server enforces this.
-        private const string AttendanceUrl = "http://127.0.0.1:5082/api/attendance";
+        private static readonly string AttendanceUrl = global::QuanLyThuVien.App.ApiBaseUrl + "/api/attendance";
 
         public async Task<AttendanceListResult> ListAttendanceAsync(string token, string month)
         {
@@ -140,7 +140,7 @@ namespace QuanLyThuVien.Services
 
 
         // Step 80: Admin-only payroll. Existing Staff and Attendance methods are unchanged.
-        private const string PayrollUrl = "http://127.0.0.1:5082/api/admin/payroll";
+        private static readonly string PayrollUrl = global::QuanLyThuVien.App.ApiBaseUrl + "/api/admin/payroll";
 
         public async Task<PayrollListResult> ListPayrollAsync(string token, string month)
         {

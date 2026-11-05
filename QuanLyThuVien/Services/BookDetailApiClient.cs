@@ -13,8 +13,8 @@ namespace QuanLyThuVien.Services
     // WPF client: database credentials never leave the API.
     public sealed class BookDetailApiClient
     {
-        private static readonly HttpClient Http = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
-        private const string Api = "http://127.0.0.1:5082/api/books/";
+        private static readonly HttpClient Http = new HttpClient { Timeout = TimeSpan.FromSeconds(90) };
+        private static readonly string Api = global::QuanLyThuVien.App.ApiBaseUrl + "/api/books/";
 
         public async Task<BookDetailResult> GetDetailsAsync(string token, long bookId)
         {
@@ -124,7 +124,7 @@ namespace QuanLyThuVien.Services
 
 
         // Step 77 - reuses the existing book API client; no extra WPF service or csproj entry.
-        private const string Inventory = "http://127.0.0.1:5082/api/inventory/";
+        private static readonly string Inventory = global::QuanLyThuVien.App.ApiBaseUrl + "/api/inventory/";
 
         public Task<InventoryBookListResponse> InventoryBooksAsync(string token) =>
             GetInventoryAsync<InventoryBookListResponse>(token, Inventory + "books");
@@ -207,7 +207,7 @@ namespace QuanLyThuVien.Services
                 }
             }
             catch (HttpRequestException)
-            { return new T { Error = "Không kết nối được http://127.0.0.1:5082. Hãy chạy SmartLibrary.Api." }; }
+            { return new T { Error = "Không kết nối được API. Kiểm tra mạng hoặc máy chủ." }; }
             catch (TaskCanceledException)
             { return new T { Error = "Yêu cầu tải kho quá thời gian 20 giây. Kiểm tra API/Aiven." }; }
             catch (Exception ex)
@@ -466,13 +466,13 @@ namespace QuanLyThuVien.Services
 
     public sealed class LibraryMapApiClient
     {
-        private static readonly HttpClient Http = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
+        private static readonly HttpClient Http = new HttpClient { Timeout = TimeSpan.FromSeconds(90) };
         public async Task<LibraryMapEnvelopeResult> GetAsync(string token)
         {
             if (string.IsNullOrWhiteSpace(token)) return LibraryMapEnvelopeResult.Fail("Chưa đăng nhập.");
             try
             {
-                using (var request = new HttpRequestMessage(HttpMethod.Get, "http://127.0.0.1:5082/api/library-map/books"))
+                using (var request = new HttpRequestMessage(HttpMethod.Get, global::QuanLyThuVien.App.ApiBaseUrl + "/api/library-map/books"))
                 {
                     request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
                     using (var response = await Http.SendAsync(request))

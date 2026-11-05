@@ -45,13 +45,13 @@ namespace QuanLyThuVien.Services
 
     public sealed class BookCatalogApiClient
     {
-        private static readonly HttpClient Http = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
+        private static readonly HttpClient Http = new HttpClient { Timeout = TimeSpan.FromSeconds(90) };
         public async Task<BookCatalogResult> SearchAsync(string token, string query)
         {
             if (string.IsNullOrWhiteSpace(token)) return BookCatalogResult.Fail("Chua dang nhap.");
             query = (query ?? "").Trim();
             if (query.Length > 100) return BookCatalogResult.Fail("Tu khoa toi da 100 ky tu.");
-            string url = "http://127.0.0.1:5082/api/books?q=" + Uri.EscapeDataString(query);
+            string url = global::QuanLyThuVien.App.ApiBaseUrl + "/api/books?q=" + Uri.EscapeDataString(query);
             try
             {
                 using (var request = new HttpRequestMessage(HttpMethod.Get, url))

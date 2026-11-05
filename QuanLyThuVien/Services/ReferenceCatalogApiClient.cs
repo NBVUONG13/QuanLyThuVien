@@ -13,8 +13,8 @@ namespace QuanLyThuVien.Services
 {
     public sealed class ReferenceCatalogApiClient
     {
-        private const string Root = "http://127.0.0.1:5082/api/catalog/reference";
-        private static readonly HttpClient Http = new HttpClient { Timeout = TimeSpan.FromSeconds(25) };
+        private static readonly string Root = global::QuanLyThuVien.App.ApiBaseUrl + "/api/catalog/reference";
+        private static readonly HttpClient Http = new HttpClient { Timeout = TimeSpan.FromSeconds(90) };
 
         public async Task<ReferenceListResult> GetAsync(string token)
         {

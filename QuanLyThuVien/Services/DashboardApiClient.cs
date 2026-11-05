@@ -14,7 +14,7 @@ namespace QuanLyThuVien.Services
     {
         private static readonly HttpClient Http = new HttpClient
         {
-            Timeout = TimeSpan.FromSeconds(20)
+            Timeout = TimeSpan.FromSeconds(90)
         };
 
         public async Task<DashboardSummaryResult> LoadAsync(string token)
@@ -24,7 +24,7 @@ namespace QuanLyThuVien.Services
             try
             {
                 using (var req = new HttpRequestMessage(HttpMethod.Get,
-                    "http://127.0.0.1:5082/api/dashboard/summary"))
+                    global::QuanLyThuVien.App.ApiBaseUrl + "/api/dashboard/summary"))
                 {
                     req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
                     using (var response = await Http.SendAsync(req).ConfigureAwait(false))

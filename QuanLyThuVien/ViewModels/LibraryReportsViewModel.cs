@@ -93,8 +93,8 @@ namespace QuanLyThuVien.ViewModels
     // a separate file just for a single read-only page.
     internal sealed class LibraryReportsApiClient
     {
-        private const string Url = "http://127.0.0.1:5082/api/admin/library-reports";
-        private static readonly HttpClient Http = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+        private static readonly string Url = global::QuanLyThuVien.App.ApiBaseUrl + "/api/admin/library-reports";
+        private static readonly HttpClient Http = new HttpClient { Timeout = TimeSpan.FromSeconds(90) };
         public async Task<LibraryReportLoadResult> GetAsync(string token, DateTime from, DateTime to)
         {
             string url = Url + "?from=" + from.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)

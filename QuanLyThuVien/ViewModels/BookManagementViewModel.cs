@@ -211,7 +211,7 @@ namespace QuanLyThuVien.ViewModels
         }
         public ICommand OpenRecommendationCommand { get; private set; }
         private static readonly HttpClient RecommendationHttp =
-            new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
+            new HttpClient { Timeout = TimeSpan.FromSeconds(90) };
 
         public ObservableCollection<BookCopyDto> Copies { get; } = new ObservableCollection<BookCopyDto>();
         public ObservableCollection<ReferenceEntry> Authors { get; } = new ObservableCollection<ReferenceEntry>();
@@ -364,7 +364,7 @@ namespace QuanLyThuVien.ViewModels
             try
             {
                 using (var request = new HttpRequestMessage(HttpMethod.Get,
-                    "http://127.0.0.1:5082/api/reader/recommendations"))
+                    global::QuanLyThuVien.App.ApiBaseUrl + "/api/reader/recommendations"))
                 {
                     request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _token);
                     using (var response = await RecommendationHttp.SendAsync(request))

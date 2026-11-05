@@ -14,19 +14,26 @@ namespace QuanLyThuVien.Services
     // OTP duoc in tai console API; day KHONG phai xac minh so dien thoai qua SMS that.
     public sealed class RegistrationApiClient
     {
-        private const string StartUrl = "http://127.0.0.1:5082/api/auth/register/start";
-        private const string ConfirmUrl = "http://127.0.0.1:5082/api/auth/register/confirm";
-        private const string PreviewUrl = "http://127.0.0.1:5082/api/auth/register/guest-preview";
+        private static bool IsCloudApi =>
+            !new Uri(global::QuanLyThuVien.App.ApiBaseUrl).IsLoopback;
+        private const string RegistrationUnavailable =
+            "Đăng ký/OTP trên cloud chưa được bật vì chưa tích hợp SMS xác minh thật. " +
+            "Hãy dùng tài khoản do quản trị viên cấp.";
+
+        private static readonly string StartUrl = global::QuanLyThuVien.App.ApiBaseUrl + "/api/auth/register/start";
+        private static readonly string ConfirmUrl = global::QuanLyThuVien.App.ApiBaseUrl + "/api/auth/register/confirm";
+        private static readonly string PreviewUrl = global::QuanLyThuVien.App.ApiBaseUrl + "/api/auth/register/guest-preview";
 
         private static readonly HttpClient Http = new HttpClient
         {
-            Timeout = TimeSpan.FromSeconds(30)
+            Timeout = TimeSpan.FromSeconds(90)
         };
 
         public async Task<GuestPreviewResult> PreviewGuestAsync(
             string guestClaimCode,
             CancellationToken cancellationToken = default(CancellationToken))
         {
+            if (IsCloudApi) return GuestPreviewResult.Failure(RegistrationUnavailable);
             if (string.IsNullOrWhiteSpace(guestClaimCode) ||
                 !System.Text.RegularExpressions.Regex.IsMatch(guestClaimCode.Trim(), @"\A[0-9]{8}\z"))
                 return GuestPreviewResult.Failure("Nhập đúng mã liên kết 8 số do Staff cấp.");
@@ -60,6 +67,7 @@ namespace QuanLyThuVien.Services
             string guestClaimCode,
             CancellationToken cancellationToken = default(CancellationToken))
         {
+            if (IsCloudApi) return RegistrationStartResult.Failure(RegistrationUnavailable);
             if (string.IsNullOrWhiteSpace(fullName) ||
                 string.IsNullOrWhiteSpace(username) ||
                 string.IsNullOrWhiteSpace(phone) ||
@@ -125,6 +133,7 @@ namespace QuanLyThuVien.Services
             Guid requestId, string otp,
             CancellationToken cancellationToken = default(CancellationToken))
         {
+            if (IsCloudApi) return RegistrationConfirmResult.Failure(RegistrationUnavailable);
             if (requestId == Guid.Empty || string.IsNullOrWhiteSpace(otp) ||
                 otp.Length != 6)
                 return RegistrationConfirmResult.Failure("Hãy nhập đúng mã OTP gồm 6 chữ số.");

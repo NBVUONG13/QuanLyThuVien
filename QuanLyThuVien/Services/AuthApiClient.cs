@@ -13,12 +13,12 @@ namespace QuanLyThuVien.Services
     // WPF .NET Framework 4.7.2: chi goi API, KHONG ket noi PostgreSQL truc tiep.
     public sealed class AuthApiClient
     {
-        private const string LoginUrl = "http://127.0.0.1:5082/api/auth/login";
-        private const string MeUrl = "http://127.0.0.1:5082/api/auth/me";
-        private const string LogoutUrl = "http://127.0.0.1:5082/api/auth/logout";
+        private static readonly string LoginUrl = global::QuanLyThuVien.App.ApiBaseUrl + "/api/auth/login";
+        private static readonly string MeUrl = global::QuanLyThuVien.App.ApiBaseUrl + "/api/auth/me";
+        private static readonly string LogoutUrl = global::QuanLyThuVien.App.ApiBaseUrl + "/api/auth/logout";
         private static readonly HttpClient Http = new HttpClient
         {
-            Timeout = TimeSpan.FromSeconds(20)
+            Timeout = TimeSpan.FromSeconds(90)
         };
 
         public async Task<AuthLoginResult> LoginAsync(
@@ -68,7 +68,7 @@ namespace QuanLyThuVien.Services
             catch (HttpRequestException)
             {
                 return AuthLoginResult.Failure(
-                    "Khong ket noi duoc API. Hay chay SmartLibrary.Api truoc.");
+                    "Khong ket noi duoc API. Kiem tra Internet hoac dia chi server.");
             }
             catch (TaskCanceledException)
             {
@@ -132,12 +132,12 @@ namespace QuanLyThuVien.Services
         // STEP 52: Reader self profile and authorized reader listing.
         public async Task<ReaderProfileResponse> GetMyReaderProfileAsync(string token)
         {
-            return await GetReaderDataAsync("http://127.0.0.1:5082/api/readers/me", token);
+            return await GetReaderDataAsync(global::QuanLyThuVien.App.ApiBaseUrl + "/api/readers/me", token);
         }
 
         public async Task<ReaderProfileResponse> FindReadersAsync(string token, string query)
         {
-            string url = "http://127.0.0.1:5082/api/readers?query=" +
+            string url = global::QuanLyThuVien.App.ApiBaseUrl + "/api/readers?query=" +
                          Uri.EscapeDataString((query ?? "").Trim());
             return await GetReaderDataAsync(url, token);
         }
@@ -186,7 +186,7 @@ namespace QuanLyThuVien.Services
             try
             {
                 using (var request = new HttpRequestMessage(HttpMethod.Post,
-                    "http://127.0.0.1:5082/api/readers/me/edit/start"))
+                    global::QuanLyThuVien.App.ApiBaseUrl + "/api/readers/me/edit/start"))
                 {
                     request.Headers.Authorization =
                         new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
@@ -221,7 +221,7 @@ namespace QuanLyThuVien.Services
             try
             {
                 using (var request = new HttpRequestMessage(HttpMethod.Post,
-                    "http://127.0.0.1:5082/api/readers/me/edit/confirm"))
+                    global::QuanLyThuVien.App.ApiBaseUrl + "/api/readers/me/edit/confirm"))
                 {
                     request.Headers.Authorization =
                         new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
@@ -258,7 +258,7 @@ namespace QuanLyThuVien.Services
             try
             {
                 using (var req = new HttpRequestMessage(HttpMethod.Post,
-                    "http://127.0.0.1:5082/api/readers/" + readerId + "/guest-claim"))
+                    global::QuanLyThuVien.App.ApiBaseUrl + "/api/readers/" + readerId + "/guest-claim"))
                 {
                     req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
                     req.Content = new StringContent("{\"staffVerifiedIdentity\":true}", Encoding.UTF8, "application/json");
@@ -291,7 +291,7 @@ namespace QuanLyThuVien.Services
                 return new ReaderInsightResponse { Message = "Phiên/ID độc giả không hợp lệ." };
             try
             {
-                var url = "http://127.0.0.1:5082/api/readers/" + readerId + "/insights";
+                var url = global::QuanLyThuVien.App.ApiBaseUrl + "/api/readers/" + readerId + "/insights";
                 using (var req = new HttpRequestMessage(HttpMethod.Get, url))
                 {
                     req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
@@ -323,7 +323,7 @@ namespace QuanLyThuVien.Services
                 return new ReaderBorrowAccessResult { Message = "Phiên/ID độc giả không hợp lệ." };
             try
             {
-                string url = "http://127.0.0.1:5082/api/readers/" + readerId + "/borrow-access";
+                string url = global::QuanLyThuVien.App.ApiBaseUrl + "/api/readers/" + readerId + "/borrow-access";
                 using (var req = new HttpRequestMessage(HttpMethod.Post, url))
                 {
                     req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);

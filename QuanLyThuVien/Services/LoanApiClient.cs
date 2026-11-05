@@ -14,8 +14,8 @@ namespace QuanLyThuVien.Services
     // WPF .NET Framework 4.7.2: all data goes through server-authorized API.
     public sealed class LoanApiClient
     {
-        private const string BaseUrl = "http://127.0.0.1:5082/api/loans";
-        private static readonly HttpClient Http = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+        private static readonly string BaseUrl = global::QuanLyThuVien.App.ApiBaseUrl + "/api/loans";
+        private static readonly HttpClient Http = new HttpClient { Timeout = TimeSpan.FromSeconds(90) };
 
         public async Task<LoanListResult> GetLoansAsync(string token)
         {
@@ -139,7 +139,7 @@ namespace QuanLyThuVien.Services
         {
             try
             {
-                using (var req = NewRequest(HttpMethod.Get, "http://127.0.0.1:5082/api/loan-renewals", token))
+                using (var req = NewRequest(HttpMethod.Get, global::QuanLyThuVien.App.ApiBaseUrl + "/api/loan-renewals", token))
                 using (var response = await Http.SendAsync(req))
                 {
                     var json = await response.Content.ReadAsStringAsync();
@@ -160,19 +160,19 @@ namespace QuanLyThuVien.Services
 
         public Task<LoanActionResult> RequestLoanRenewalAsync(string token, long borrowDetailId)
         {
-            return SendActionAsync("http://127.0.0.1:5082/api/loan-renewals/request", token,
+            return SendActionAsync(global::QuanLyThuVien.App.ApiBaseUrl + "/api/loan-renewals/request", token,
                 Serialize(new NewRenewalDto { BorrowDetailId = borrowDetailId }));
         }
 
         public Task<LoanActionResult> ReviewLoanRenewalAsync(string token, long requestId, bool approve, string note)
         {
-            return SendActionAsync("http://127.0.0.1:5082/api/loan-renewals/" + requestId + "/review",
+            return SendActionAsync(global::QuanLyThuVien.App.ApiBaseUrl + "/api/loan-renewals/" + requestId + "/review",
                 token, Serialize(new ReviewRequestDto { Approve = approve, Note = note }));
         }
 
         public Task<LoanActionResult> CancelLoanRenewalAsync(string token, long requestId)
         {
-            return SendActionAsync("http://127.0.0.1:5082/api/loan-renewals/" + requestId + "/cancel", token, "{}");
+            return SendActionAsync(global::QuanLyThuVien.App.ApiBaseUrl + "/api/loan-renewals/" + requestId + "/cancel", token, "{}");
         }
 
         [DataContract]
@@ -217,7 +217,7 @@ namespace QuanLyThuVien.Services
         // Step58: requestable book titles (includes titles with zero available physical copies).
         public async Task<LoanBookListResult> GetRequestBookSuggestionsAsync(string token, string query)
         {
-            string url = "http://127.0.0.1:5082/api/borrow-requests/books?query=" +
+            string url = global::QuanLyThuVien.App.ApiBaseUrl + "/api/borrow-requests/books?query=" +
                          Uri.EscapeDataString((query ?? "").Trim());
             try
             {
@@ -245,7 +245,7 @@ namespace QuanLyThuVien.Services
             try
             {
                 using (var req = NewRequest(HttpMethod.Get,
-                           "http://127.0.0.1:5082/api/borrow-requests", token))
+                           global::QuanLyThuVien.App.ApiBaseUrl + "/api/borrow-requests", token))
                 using (var response = await Http.SendAsync(req))
                 {
                     var json = await response.Content.ReadAsStringAsync();
@@ -267,19 +267,19 @@ namespace QuanLyThuVien.Services
         public Task<LoanActionResult> SubmitBorrowRequestAsync(string token,
             List<BorrowRequestLine> items, string note)
         {
-            return SendActionAsync("http://127.0.0.1:5082/api/borrow-requests", token,
+            return SendActionAsync(global::QuanLyThuVien.App.ApiBaseUrl + "/api/borrow-requests", token,
                 Serialize(new NewBorrowRequestDto { Items = items, Note = note }));
         }
 
         public Task<LoanActionResult> CancelBorrowRequestAsync(string token, long requestId)
         {
-            return SendActionAsync("http://127.0.0.1:5082/api/borrow-requests/" +
+            return SendActionAsync(global::QuanLyThuVien.App.ApiBaseUrl + "/api/borrow-requests/" +
                                    requestId + "/cancel", token, "{}");
         }
 
         public Task<LoanActionResult> ReviewBorrowRequestAsync(string token, long requestId, bool approve, string note)
         {
-            return SendActionAsync("http://127.0.0.1:5082/api/borrow-requests/" + requestId + "/review",
+            return SendActionAsync(global::QuanLyThuVien.App.ApiBaseUrl + "/api/borrow-requests/" + requestId + "/review",
                 token, Serialize(new ReviewRequestDto { Approve = approve, Note = note }));
         }
 
@@ -294,7 +294,7 @@ namespace QuanLyThuVien.Services
             string fullName, string phone, string citizenId, bool staffVerified,
             List<BorrowRequestLine> items, string note)
         {
-            return SendActionAsync("http://127.0.0.1:5082/api/borrow-requests/walkin", token,
+            return SendActionAsync(global::QuanLyThuVien.App.ApiBaseUrl + "/api/borrow-requests/walkin", token,
                 Serialize(new WalkInRequestDto
                 {
                     ExistingReaderUserId = existingReaderId,
@@ -324,7 +324,7 @@ namespace QuanLyThuVien.Services
             try
             {
                 using (var req = NewRequest(HttpMethod.Post,
-                    "http://127.0.0.1:5082/api/readers/identity-check", token))
+                    global::QuanLyThuVien.App.ApiBaseUrl + "/api/readers/identity-check", token))
                 {
                     req.Content = new StringContent(Serialize(new IdentityCheckRequestDto
                     { Phone = phone, CitizenId = citizenId }), Encoding.UTF8, "application/json");
@@ -354,7 +354,7 @@ namespace QuanLyThuVien.Services
         // This uses the existing authenticated HTTP client and does not access SQL from WPF.
         public Task<LoanActionResult> SyncDueRemindersAsync(string token)
         {
-            return SendActionAsync("http://127.0.0.1:5082/api/notifications/sync-due", token, "{}");
+            return SendActionAsync(global::QuanLyThuVien.App.ApiBaseUrl + "/api/notifications/sync-due", token, "{}");
         }
 
         // STEP 71: Read-only notifications + mark-as-read. No client-side SQL.
@@ -362,7 +362,7 @@ namespace QuanLyThuVien.Services
         {
             try
             {
-                using (var request = NewRequest(HttpMethod.Get, "http://127.0.0.1:5082/api/notifications", token))
+                using (var request = NewRequest(HttpMethod.Get, global::QuanLyThuVien.App.ApiBaseUrl + "/api/notifications", token))
                 using (var response = await Http.SendAsync(request))
                 {
                     string json = await response.Content.ReadAsStringAsync();
@@ -385,11 +385,11 @@ namespace QuanLyThuVien.Services
 
         public Task<LoanActionResult> MarkNotificationReadAsync(string token, long notificationId)
         {
-            return SendActionAsync("http://127.0.0.1:5082/api/notifications/" + notificationId + "/read", token, "{}");
+            return SendActionAsync(global::QuanLyThuVien.App.ApiBaseUrl + "/api/notifications/" + notificationId + "/read", token, "{}");
         }
         public Task<LoanActionResult> MarkAllNotificationsReadAsync(string token)
         {
-            return SendActionAsync("http://127.0.0.1:5082/api/notifications/read-all", token, "{}");
+            return SendActionAsync(global::QuanLyThuVien.App.ApiBaseUrl + "/api/notifications/read-all", token, "{}");
         }
 
         [DataContract]
@@ -404,7 +404,7 @@ namespace QuanLyThuVien.Services
         {
             try
             {
-                string url = "http://127.0.0.1:5082/api/fines?query=" + Uri.EscapeDataString(query ?? "");
+                string url = global::QuanLyThuVien.App.ApiBaseUrl + "/api/fines?query=" + Uri.EscapeDataString(query ?? "");
                 using (var req = NewRequest(HttpMethod.Get, url, token))
                 using (var resp = await Http.SendAsync(req))
                 {
@@ -427,7 +427,7 @@ namespace QuanLyThuVien.Services
         {
             try
             {
-                string url = "http://127.0.0.1:5082/api/fines/" + fineId + "/payments";
+                string url = global::QuanLyThuVien.App.ApiBaseUrl + "/api/fines/" + fineId + "/payments";
                 using (var req = NewRequest(HttpMethod.Get, url, token))
                 using (var resp = await Http.SendAsync(req))
                 {
@@ -450,7 +450,7 @@ namespace QuanLyThuVien.Services
         public Task<LoanActionResult> PayFineAsync(string token, long fineId, decimal amount,
             string method, string reference)
         {
-            return SendActionAsync("http://127.0.0.1:5082/api/fines/" + fineId + "/payments", token,
+            return SendActionAsync(global::QuanLyThuVien.App.ApiBaseUrl + "/api/fines/" + fineId + "/payments", token,
                 Serialize(new FinePaymentDto { Amount = amount, Method = method, TransactionReference = reference }));
         }
         [DataContract]

@@ -13,8 +13,8 @@ namespace QuanLyThuVien.Services
 {
     public sealed class LibraryPolicyApiClient
     {
-        private const string Url = "http://127.0.0.1:5082/api/admin/library-policy";
-        private static readonly HttpClient Http = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+        private static readonly string Url = global::QuanLyThuVien.App.ApiBaseUrl + "/api/admin/library-policy";
+        private static readonly HttpClient Http = new HttpClient { Timeout = TimeSpan.FromSeconds(90) };
 
         public async Task<LibraryPolicyResult> LoadAsync(string token)
         {
