@@ -1,4 +1,4 @@
-﻿using System.Globalization;
+using System.Globalization;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text;
@@ -30,7 +30,7 @@ public static class SemanticBookEndpoints
         app.MapGet("/api/library/semantic-books/search", async (
             string? q, HttpRequest req, SessionService sessions, IConfiguration cfg, CancellationToken ct) =>
         {
-            if (!app.Environment.IsDevelopment()) return Results.NotFound();
+            if (!ProductionAccess.IsEnabled(app)) return Results.NotFound();
             var actor = sessions.Validate(Bearer(req));
             if (actor is null) return Results.Unauthorized();
             if (actor.Role is not ("Reader" or "Staff" or "Admin"))
@@ -49,7 +49,7 @@ public static class SemanticBookEndpoints
         app.MapPost("/api/admin/semantic-books/reindex", async (
             HttpRequest req, SessionService sessions, IConfiguration cfg, CancellationToken ct) =>
         {
-            if (!app.Environment.IsDevelopment()) return Results.NotFound();
+            if (!ProductionAccess.IsEnabled(app)) return Results.NotFound();
             var actor = sessions.Validate(Bearer(req));
             if (actor is null) return Results.Unauthorized();
             if (actor.Role != "Admin") return Results.StatusCode(StatusCodes.Status403Forbidden);

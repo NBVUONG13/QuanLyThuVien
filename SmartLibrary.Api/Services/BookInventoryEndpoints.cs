@@ -1,4 +1,4 @@
-﻿using System.Text.Json;
+using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Npgsql;
@@ -78,7 +78,7 @@ public static class BookInventoryEndpoints
                     totalCopies = rd.GetInt64(6),
                     availableCopies = rd.GetInt64(7),
                     onLoanCopies = rd.GetInt64(8),
-                    coverUrl = BookCoverUrlResolver.Resolve(rd.GetString(9), rd.GetString(10), config, app.Environment)
+                    coverUrl = BookCoverUrlResolver.Resolve(rd.GetString(9),rd.GetString(10),config,app.Environment)
                 });
                 return Results.Ok(new { books = data });
             }
@@ -118,7 +118,7 @@ public static class BookInventoryEndpoints
                         isVisible = rd.GetBoolean(6),
                         authorIds = rd.GetFieldValue<long[]>(7),
                         categoryIds = rd.GetFieldValue<long[]>(8),
-                        coverUrl = BookCoverUrlResolver.Resolve(rd.GetString(9), rd.GetString(10), config, app.Environment)
+                        coverUrl = BookCoverUrlResolver.Resolve(rd.GetString(9),rd.GetString(10),config,app.Environment)
                     }
                 });
             }
@@ -752,7 +752,7 @@ public static class BookInventoryEndpoints
     }
     private static IResult? Guard(WebApplication app, HttpRequest req, SessionService sessions)
     {
-        if (!app.Environment.IsDevelopment()) return Results.NotFound();
+        if (!ProductionAccess.IsEnabled(app)) return Results.NotFound();
         var actor = sessions.Validate(Bearer(req));
         if (actor is null) return Results.Unauthorized();
         if (actor.Role is not ("Admin" or "Staff")) return Results.StatusCode(403);

@@ -1,4 +1,4 @@
-﻿using System.Globalization;
+using System.Globalization;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Npgsql;
@@ -14,7 +14,7 @@ public static class StaffAttendanceEndpoints
         app.MapGet("/api/attendance/shifts", async (string? month, HttpRequest req,
             SessionService sessions, IConfiguration config, CancellationToken ct) =>
         {
-            if (!app.Environment.IsDevelopment()) return Results.NotFound();
+            if (!ProductionAccess.IsEnabled(app)) return Results.NotFound();
             var actor = sessions.Validate(Bearer(req));
             if (actor is null) return Results.Unauthorized();
             if (actor.Role is not ("Admin" or "Staff")) return Results.StatusCode(403);
@@ -91,7 +91,7 @@ public static class StaffAttendanceEndpoints
         app.MapPost("/api/attendance/check-in", async (HttpRequest req, SessionService sessions,
             IConfiguration config, CancellationToken ct) =>
         {
-            if (!app.Environment.IsDevelopment()) return Results.NotFound();
+            if (!ProductionAccess.IsEnabled(app)) return Results.NotFound();
             var actor = sessions.Validate(Bearer(req));
             if (actor is null) return Results.Unauthorized();
             if (actor.Role != "Staff") return Results.StatusCode(403);
@@ -127,7 +127,7 @@ public static class StaffAttendanceEndpoints
         app.MapPost("/api/attendance/check-out", async (HttpRequest req, SessionService sessions,
             IConfiguration config, CancellationToken ct) =>
         {
-            if (!app.Environment.IsDevelopment()) return Results.NotFound();
+            if (!ProductionAccess.IsEnabled(app)) return Results.NotFound();
             var actor = sessions.Validate(Bearer(req));
             if (actor is null) return Results.Unauthorized();
             if (actor.Role != "Staff") return Results.StatusCode(403);

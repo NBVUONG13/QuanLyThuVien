@@ -1,4 +1,4 @@
-﻿using System.Globalization;
+using System.Globalization;
 using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
@@ -29,7 +29,7 @@ public static class LibraryPolicyEndpoints
             HttpRequest req, SessionService sessions,
             IConfiguration config, CancellationToken ct) =>
         {
-            if (!app.Environment.IsDevelopment()) return Results.NotFound();
+            if (!ProductionAccess.IsEnabled(app)) return Results.NotFound();
             var actor = sessions.Validate(GetBearerToken(req));
             if (actor is null) return Results.Unauthorized();
             if (actor.Role != "Admin") return Results.StatusCode(403);
@@ -88,7 +88,7 @@ public static class LibraryPolicyEndpoints
             PolicyEditRequest input, HttpRequest req, SessionService sessions,
             IConfiguration config, CancellationToken ct) =>
         {
-            if (!app.Environment.IsDevelopment()) return Results.NotFound();
+            if (!ProductionAccess.IsEnabled(app)) return Results.NotFound();
             var actor = sessions.Validate(GetBearerToken(req));
             if (actor is null) return Results.Unauthorized();
             if (actor.Role != "Admin") return Results.StatusCode(403);

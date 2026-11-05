@@ -1,4 +1,4 @@
-﻿using System.Globalization;
+using System.Globalization;
 using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
@@ -290,7 +290,7 @@ public static class StaffPayrollEndpoints
         out long actorId)
     {
         actorId = 0;
-        if (!app.Environment.IsDevelopment()) return Results.NotFound();
+        if (!ProductionAccess.IsEnabled(app)) return Results.NotFound();
         var actor = session.Validate(Bearer(req));
         if (actor is null) return Results.Unauthorized();
         if (actor.Role != "Admin") return Results.StatusCode(403);

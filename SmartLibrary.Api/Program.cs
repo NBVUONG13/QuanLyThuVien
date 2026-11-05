@@ -7,11 +7,15 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using SmartLibrary.Api.Services;
+using Microsoft.AspNetCore.RateLimiting;
+using System.Threading.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Chi lang nghe tren chinh may phat trien. WPF se goi backend qua HTTP loopback.
-
+// Local development: preserve the existing WPF localhost endpoint.
+// Cloud staging/Production: bind to the interface and PORT supplied by the host.
+// Production endpoints require SmartLibrary:EnableProductionApi=true and DB-backed auth.
+// NEVER use ASPNETCORE_ENVIRONMENT=Development on a public server.
 if (builder.Environment.IsDevelopment())
 {
     builder.WebHost.UseUrls("http://127.0.0.1:5082");
@@ -19,24 +23,33 @@ if (builder.Environment.IsDevelopment())
 else
 {
     string? portValue = Environment.GetEnvironmentVariable("PORT");
-
-    if (!int.TryParse(portValue, out int cloudPort)
-        || cloudPort < 1024
-        || cloudPort > 65535)
-    {
+    if (!int.TryParse(portValue, out int cloudPort) || cloudPort < 1024 || cloudPort > 65535)
         cloudPort = 10000;
-    }
-
     builder.WebHost.UseUrls($"http://0.0.0.0:{cloudPort}");
 }
-
 
 // Dang ky AuthService.cs cua buoc 29 voi Dependency Injection.
 builder.Services.AddScoped<AuthService>();
 // Quan trong: OTP tam luu tren RAM, phai dung Singleton giua /start va /confirm.
 builder.Services.AddSingleton<RegistrationService>();
-// Phien tam luu tren server, chi dung de test localhost.
+// Development sessions RAM; Production sessions persisted in Aiven (hashed tokens).
+builder.Services.AddHttpContextAccessor();
 builder.Services.AddSingleton<SessionService>();
+// Harden login against online password guessing; partition by connection IP.
+// Some reverse proxies may share an IP, so keep limits moderately generous.
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.AddPolicy("login", request => RateLimitPartition.GetFixedWindowLimiter(
+        request.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+        _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = 12,
+            Window = TimeSpan.FromMinutes(1),
+            QueueLimit = 0,
+            AutoReplenishment = true
+        }));
+});
 // Developer-only one-time codes for Reader profile changes; no new file or database table.
 builder.Services.AddSingleton<ReaderProfileEditOtpStore>();
 // STEP 76: automatic Reader tier promotion/demotion, no Admin action.
@@ -44,12 +57,56 @@ builder.Services.AddHostedService<ReaderTierAutoHostedService>();
 // Step 84+: Automatic embedding in background. Existing documents, API book edits and SQL imports.
 // Does not block save requests or require manual PowerShell reindex.
 builder.Services.AddSingleton<BookEmbeddingAutoIndexer>();
-builder.Services.AddHostedService(sp => sp.GetRequiredService<BookEmbeddingAutoIndexer>());
+// LM Studio and autoindexer are local-development only in the current project.
+// They must NOT connect to the developer's home machine from Render.
+if (builder.Environment.IsDevelopment())
+    builder.Services.AddHostedService(sp => sp.GetRequiredService<BookEmbeddingAutoIndexer>());
 
 var app = builder.Build();
 
-// Local cover images from wwwroot/covers (only API on 127.0.0.1:5082).
+// Static assets if present; Cloudinary hosts cover images in Production.
 app.UseStaticFiles();
+// Endpoint-specific rate limiting must run after UseRouting.
+app.UseRouting();
+app.UseRateLimiter();
+// Production defense-in-depth. Every /api/* endpoint (except login/health)
+// must have a valid database-backed session; endpoint-specific checks still
+// enforce Reader/Staff/Admin ownership and permissions.
+app.Use(async (context, next) =>
+{
+    if (!context.Request.Path.StartsWithSegments("/api"))
+    {
+        await next();
+        return;
+    }
+    string path = context.Request.Path.Value ?? "";
+    if (path.Equals("/api/health", StringComparison.OrdinalIgnoreCase))
+    {
+        await next();
+        return;
+    }
+    if (!ProductionAccess.IsEnabled(app))
+    {
+        context.Response.StatusCode = StatusCodes.Status404NotFound;
+        return;
+    }
+    if (app.Environment.IsDevelopment() ||
+        path.Equals("/api/auth/login", StringComparison.OrdinalIgnoreCase))
+    {
+        await next();
+        return;
+    }
+    var sessions = context.RequestServices.GetRequiredService<SessionService>();
+    string raw = context.Request.Headers.Authorization.ToString();
+    string? bearer = raw.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
+        ? raw[7..].Trim() : null;
+    if (sessions.Validate(bearer) is null)
+    {
+        context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+        return;
+    }
+    await next();
+});
 
 // Step 75: Admin policy UI endpoints live in their own module.
 app.MapLibraryPolicyEndpoints();
@@ -127,8 +184,7 @@ app.MapGet("/api/health", async (
         {
             status = "error",
             service = "SmartLibrary.Api",
-            database = "connection_failed",
-            errorType = exception.GetType().Name
+            database = "connection_failed"
         }, statusCode: StatusCodes.Status503ServiceUnavailable);
     }
 });
@@ -143,7 +199,7 @@ app.MapPost("/api/auth/login", async (
 {
     try
     {
-        if (!app.Environment.IsDevelopment())
+        if (!ProductionAccess.IsEnabled(app))
             return Results.StatusCode(StatusCodes.Status404NotFound);
         var user = await authService.LoginAsync(
             request.Username,
@@ -200,7 +256,7 @@ app.MapPost("/api/auth/login", async (
 
         return Results.Json(new
         {
-            message = "Loi PostgreSQL khi dang nhap. Kiem tra migration Guest va SQLSTATE trong console API."
+            message = "Dang nhap tam thoi khong kha dung. Vui long thu lai sau."
         }, statusCode: StatusCodes.Status503ServiceUnavailable);
     }
     catch (Exception exception)
@@ -214,13 +270,13 @@ app.MapPost("/api/auth/login", async (
             message = "Khong the xu ly dang nhap luc nay."
         }, statusCode: StatusCodes.Status503ServiceUnavailable);
     }
-});
+}).RequireRateLimiting("login");
 
 // Xac thuc session tu header Authorization: Bearer <token>.
 // Khong nhan userId/role tu request client.
 app.MapGet("/api/auth/me", (HttpRequest request, SessionService sessions) =>
 {
-    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    if (!ProductionAccess.IsEnabled(app)) return Results.NotFound();
     var current = sessions.Validate(ReadBearerToken(request));
     if (current is null) return Results.Unauthorized();
     return Results.Ok(new
@@ -234,7 +290,7 @@ app.MapGet("/api/auth/me", (HttpRequest request, SessionService sessions) =>
 
 app.MapPost("/api/auth/logout", (HttpRequest request, SessionService sessions) =>
 {
-    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    if (!ProductionAccess.IsEnabled(app)) return Results.NotFound();
     string? token = ReadBearerToken(request);
     if (sessions.Validate(token) is null) return Results.Unauthorized();
     sessions.Revoke(token);
@@ -258,7 +314,7 @@ app.MapGet("/api/dashboard/summary", async (
     IConfiguration config,
     CancellationToken cancellationToken) =>
 {
-    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    if (!ProductionAccess.IsEnabled(app)) return Results.NotFound();
     var current = sessions.Validate(ReadBearerToken(request));
     if (current is null) return Results.Unauthorized();
     if (current.Role != "Reader" && current.Role != "Staff" && current.Role != "Admin")
@@ -452,7 +508,7 @@ app.MapGet("/api/books", async (
     HttpRequest request, SessionService sessions, IConfiguration config,
     string? q, CancellationToken cancellationToken) =>
 {
-    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    if (!ProductionAccess.IsEnabled(app)) return Results.NotFound();
     var session = sessions.Validate(ReadBearerToken(request));
     if (session is null) return Results.Unauthorized();
     if (session.Role != "Reader" && session.Role != "Staff" && session.Role != "Admin")
@@ -524,7 +580,7 @@ app.MapGet("/api/library-map/books", async (
     HttpRequest request, SessionService sessions,
     IConfiguration config, CancellationToken ct) =>
 {
-    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    if (!ProductionAccess.IsEnabled(app)) return Results.NotFound();
     var session = sessions.Validate(ReadBearerToken(request));
     if (session is null) return Results.Unauthorized();
     if (session.Role is not ("Reader" or "Staff" or "Admin")) return Results.StatusCode(403);
@@ -585,7 +641,7 @@ app.MapGet("/api/books/{bookId:long}/details", async (
     long bookId, HttpRequest request, SessionService sessions,
     IConfiguration config, CancellationToken ct) =>
 {
-    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    if (!ProductionAccess.IsEnabled(app)) return Results.NotFound();
     var session = sessions.Validate(ReadBearerToken(request));
     if (session is null) return Results.Unauthorized();
     if (session.Role is not ("Reader" or "Staff" or "Admin")) return Results.StatusCode(403);
@@ -660,7 +716,7 @@ app.MapGet("/api/books/{bookId:long}/ratings", async (
     long bookId, HttpRequest request, SessionService sessions,
     IConfiguration config, CancellationToken ct) =>
 {
-    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    if (!ProductionAccess.IsEnabled(app)) return Results.NotFound();
     var actor = sessions.Validate(ReadBearerToken(request));
     if (actor is null) return Results.Unauthorized();
     if (actor.Role is not ("Reader" or "Staff" or "Admin")) return Results.StatusCode(403);
@@ -757,7 +813,7 @@ app.MapPut("/api/books/{bookId:long}/rating", async (
     long bookId, BookRatingUpdate input, HttpRequest request,
     SessionService sessions, IConfiguration config, CancellationToken ct) =>
 {
-    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    if (!ProductionAccess.IsEnabled(app)) return Results.NotFound();
     var actor = sessions.Validate(ReadBearerToken(request));
     if (actor is null) return Results.Unauthorized();
     if (actor.Role != "Reader") return Results.StatusCode(403);
@@ -810,7 +866,7 @@ app.MapGet("/api/books/{bookId:long}/copies", async (
     long bookId, HttpRequest request, SessionService sessions,
     IConfiguration config, CancellationToken ct) =>
 {
-    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    if (!ProductionAccess.IsEnabled(app)) return Results.NotFound();
     var session = sessions.Validate(ReadBearerToken(request));
     if (session is null) return Results.Unauthorized();
     if (session.Role is not ("Staff" or "Admin")) return Results.StatusCode(403);
@@ -845,7 +901,7 @@ app.MapPost("/api/books/{bookId:long}/copies", async (
     long bookId, AddCopyRequest body, HttpRequest request, SessionService sessions,
     IConfiguration config, CancellationToken ct) =>
 {
-    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    if (!ProductionAccess.IsEnabled(app)) return Results.NotFound();
     var session = sessions.Validate(ReadBearerToken(request));
     if (session is null) return Results.Unauthorized();
     if (session.Role is not ("Staff" or "Admin")) return Results.StatusCode(403);
@@ -889,7 +945,7 @@ app.MapPut("/api/books/{bookId:long}/copies/{copyId:long}/location", async (
     long bookId, long copyId, ChangeCopyLocationRequest body, HttpRequest request,
     SessionService sessions, IConfiguration config, CancellationToken ct) =>
 {
-    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    if (!ProductionAccess.IsEnabled(app)) return Results.NotFound();
     var session = sessions.Validate(ReadBearerToken(request));
     if (session is null) return Results.Unauthorized();
     if (session.Role is not ("Staff" or "Admin")) return Results.StatusCode(403);
@@ -963,7 +1019,7 @@ app.MapPut("/api/books/{bookId:long}/copies/{copyId:long}/location", async (
 app.MapGet("/api/catalog/reference", async (HttpRequest req, SessionService sessions,
     IConfiguration config, CancellationToken ct) =>
 {
-    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    if (!ProductionAccess.IsEnabled(app)) return Results.NotFound();
     var who = sessions.Validate(ReadBearerToken(req));
     if (who is null) return Results.Unauthorized();
     if (who.Role is not ("Reader" or "Staff" or "Admin")) return Results.StatusCode(403);
@@ -1000,7 +1056,7 @@ app.MapGet("/api/catalog/reference", async (HttpRequest req, SessionService sess
 app.MapPost("/api/catalog/reference/{kind}", async (string kind, ReferenceCreateRequest body,
     HttpRequest req, SessionService sessions, IConfiguration config, CancellationToken ct) =>
 {
-    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    if (!ProductionAccess.IsEnabled(app)) return Results.NotFound();
     var who = sessions.Validate(ReadBearerToken(req));
     if (who is null) return Results.Unauthorized();
     if (who.Role is not ("Staff" or "Admin")) return Results.StatusCode(403);
@@ -1053,7 +1109,7 @@ app.MapPost("/api/catalog/reference/{kind}", async (string kind, ReferenceCreate
 app.MapGet("/api/admin/staff", async (HttpRequest request, SessionService sessions,
     IConfiguration config, CancellationToken ct) =>
 {
-    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    if (!ProductionAccess.IsEnabled(app)) return Results.NotFound();
     var actor = sessions.Validate(ReadBearerToken(request));
     if (actor is null) return Results.Unauthorized();
     if (actor.Role != "Admin") return Results.StatusCode(403);
@@ -1090,7 +1146,7 @@ app.MapGet("/api/admin/staff", async (HttpRequest request, SessionService sessio
 app.MapPost("/api/admin/staff", async (NewStaffRequest body, HttpRequest request,
     SessionService sessions, IConfiguration config, CancellationToken ct) =>
 {
-    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    if (!ProductionAccess.IsEnabled(app)) return Results.NotFound();
     var actor = sessions.Validate(ReadBearerToken(request));
     if (actor is null) return Results.Unauthorized();
     if (actor.Role != "Admin") return Results.StatusCode(403);
@@ -1157,7 +1213,7 @@ app.MapPost("/api/admin/staff", async (NewStaffRequest body, HttpRequest request
 app.MapGet("/api/readers/me", async (HttpRequest request, SessionService sessions,
     IConfiguration configuration, CancellationToken cancellationToken) =>
 {
-    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    if (!ProductionAccess.IsEnabled(app)) return Results.NotFound();
     var actor = sessions.Validate(ReadBearerToken(request));
     if (actor is null) return Results.Unauthorized();
     if (actor.Role != "Reader") return Results.StatusCode(StatusCodes.Status403Forbidden);
@@ -1210,7 +1266,7 @@ app.MapGet("/api/readers/me", async (HttpRequest request, SessionService session
 app.MapGet("/api/readers", async (string? query, HttpRequest request, SessionService sessions,
     IConfiguration configuration, CancellationToken cancellationToken) =>
 {
-    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    if (!ProductionAccess.IsEnabled(app)) return Results.NotFound();
     var actor = sessions.Validate(ReadBearerToken(request));
     if (actor is null) return Results.Unauthorized();
     if (actor.Role is not ("Staff" or "Admin"))
@@ -1275,7 +1331,7 @@ app.MapPost("/api/borrow-requests/walkin", async (
     WalkInBorrowRequest input, HttpRequest request, SessionService sessions,
     IConfiguration config, CancellationToken ct) =>
 {
-    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    if (!ProductionAccess.IsEnabled(app)) return Results.NotFound();
     var actor = sessions.Validate(ReadBearerToken(request));
     if (actor is null) return Results.Unauthorized();
     if (actor.Role is not ("Staff" or "Admin")) return Results.StatusCode(403);
@@ -1517,7 +1573,7 @@ app.MapPost("/api/readers/identity-check", async (
     ReaderIdentityLookupRequest input, HttpRequest request, SessionService sessions,
     IConfiguration config, CancellationToken ct) =>
 {
-    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    if (!ProductionAccess.IsEnabled(app)) return Results.NotFound();
     var actor = sessions.Validate(ReadBearerToken(request));
     if (actor is null) return Results.Unauthorized();
     if (actor.Role is not ("Staff" or "Admin")) return Results.StatusCode(403);
@@ -1652,7 +1708,7 @@ app.MapPost("/api/readers/identity-check", async (
 app.MapGet("/api/readers/{readerId:long}/insights", async (long readerId,
     HttpRequest request, SessionService sessions, IConfiguration config, CancellationToken ct) =>
 {
-    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    if (!ProductionAccess.IsEnabled(app)) return Results.NotFound();
     var actor = sessions.Validate(ReadBearerToken(request));
     if (actor is null) return Results.Unauthorized();
     if (actor.Role is not ("Staff" or "Admin")) return Results.StatusCode(403);
@@ -1926,7 +1982,7 @@ app.MapPost("/api/readers/{readerId:long}/borrow-access", async (
     long readerId, ReaderBorrowAccessRequest body, HttpRequest request,
     SessionService sessions, IConfiguration config, CancellationToken ct) =>
 {
-    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    if (!ProductionAccess.IsEnabled(app)) return Results.NotFound();
     var actor = sessions.Validate(ReadBearerToken(request));
     if (actor is null) return Results.Unauthorized();
     if (actor.Role is not ("Staff" or "Admin")) return Results.StatusCode(403);
@@ -2128,7 +2184,7 @@ app.MapPost("/api/readers/me/edit/confirm", async (
 app.MapGet("/api/loans", async (HttpRequest request, SessionService sessions,
     IConfiguration configuration, CancellationToken ct) =>
 {
-    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    if (!ProductionAccess.IsEnabled(app)) return Results.NotFound();
     var actor = sessions.Validate(ReadBearerToken(request));
     if (actor is null) return Results.Unauthorized();
     if (actor.Role is not ("Reader" or "Staff" or "Admin")) return Results.StatusCode(403);
@@ -2195,7 +2251,7 @@ app.MapGet("/api/loans", async (HttpRequest request, SessionService sessions,
 app.MapGet("/api/loans/reader-suggestions", async (string? query, HttpRequest request,
     SessionService sessions, IConfiguration configuration, CancellationToken ct) =>
 {
-    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    if (!ProductionAccess.IsEnabled(app)) return Results.NotFound();
     var actor = sessions.Validate(ReadBearerToken(request));
     if (actor is null) return Results.Unauthorized();
     if (actor.Role is not ("Staff" or "Admin")) return Results.StatusCode(403);
@@ -2246,7 +2302,7 @@ app.MapGet("/api/loans/reader-suggestions", async (string? query, HttpRequest re
 app.MapGet("/api/loans/book-suggestions", async (string? query, HttpRequest request,
     SessionService sessions, IConfiguration configuration, CancellationToken ct) =>
 {
-    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    if (!ProductionAccess.IsEnabled(app)) return Results.NotFound();
     var actor = sessions.Validate(ReadBearerToken(request));
     if (actor is null) return Results.Unauthorized();
     if (actor.Role is not ("Staff" or "Admin")) return Results.StatusCode(403);
@@ -2328,7 +2384,7 @@ app.MapGet("/api/loans/book-suggestions", async (string? query, HttpRequest requ
 app.MapGet("/api/loans/available-copies", async (string? query, HttpRequest request,
     SessionService sessions, IConfiguration configuration, CancellationToken ct) =>
 {
-    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    if (!ProductionAccess.IsEnabled(app)) return Results.NotFound();
     var actor = sessions.Validate(ReadBearerToken(request));
     if (actor is null) return Results.Unauthorized();
     if (actor.Role is not ("Staff" or "Admin")) return Results.StatusCode(403);
@@ -2381,7 +2437,7 @@ app.MapPost("/api/loans/checkout", async (CheckoutLoanRequest input,
     HttpRequest request, SessionService sessions, IConfiguration configuration,
     CancellationToken ct) =>
 {
-    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    if (!ProductionAccess.IsEnabled(app)) return Results.NotFound();
     var actor = sessions.Validate(ReadBearerToken(request));
     if (actor is null) return Results.Unauthorized();
     if (actor.Role is not ("Staff" or "Admin")) return Results.StatusCode(403);
@@ -2525,7 +2581,7 @@ app.MapPost("/api/loans/{borrowDetailId:long}/return", async (long borrowDetailI
     HttpRequest request, SessionService sessions, IConfiguration configuration,
     CancellationToken ct) =>
 {
-    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    if (!ProductionAccess.IsEnabled(app)) return Results.NotFound();
     var actor = sessions.Validate(ReadBearerToken(request));
     if (actor is null) return Results.Unauthorized();
     if (actor.Role is not ("Staff" or "Admin")) return Results.StatusCode(403);
@@ -2667,7 +2723,7 @@ app.MapPost("/api/loans/{borrowDetailId:long}/return", async (long borrowDetailI
 app.MapGet("/api/fines", async (string? query, HttpRequest request, SessionService sessions,
     IConfiguration configuration, CancellationToken ct) =>
 {
-    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    if (!ProductionAccess.IsEnabled(app)) return Results.NotFound();
     var actor = sessions.Validate(ReadBearerToken(request));
     if (actor is null) return Results.Unauthorized();
     if (actor.Role is not ("Reader" or "Staff" or "Admin")) return Results.StatusCode(403);
@@ -2739,7 +2795,7 @@ app.MapGet("/api/fines", async (string? query, HttpRequest request, SessionServi
 app.MapGet("/api/fines/{fineId:long}/payments", async (long fineId, HttpRequest request,
     SessionService sessions, IConfiguration configuration, CancellationToken ct) =>
 {
-    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    if (!ProductionAccess.IsEnabled(app)) return Results.NotFound();
     var actor = sessions.Validate(ReadBearerToken(request));
     if (actor is null) return Results.Unauthorized();
     if (actor.Role is not ("Reader" or "Staff" or "Admin")) return Results.StatusCode(403);
@@ -2790,7 +2846,7 @@ app.MapGet("/api/fines/{fineId:long}/payments", async (long fineId, HttpRequest 
 app.MapPost("/api/fines/{fineId:long}/payments", async (long fineId, FinePaymentRequest body,
     HttpRequest request, SessionService sessions, IConfiguration configuration, CancellationToken ct) =>
 {
-    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    if (!ProductionAccess.IsEnabled(app)) return Results.NotFound();
     var actor = sessions.Validate(ReadBearerToken(request));
     if (actor is null) return Results.Unauthorized();
     if (actor.Role is not ("Staff" or "Admin")) return Results.StatusCode(403);
@@ -2897,7 +2953,7 @@ app.MapPost("/api/fines/{fineId:long}/payments", async (long fineId, FinePayment
 app.MapGet("/api/borrow-requests/books", async (string? query, HttpRequest request,
     SessionService sessions, IConfiguration config, CancellationToken ct) =>
 {
-    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    if (!ProductionAccess.IsEnabled(app)) return Results.NotFound();
     var actor = sessions.Validate(ReadBearerToken(request));
     if (actor is null) return Results.Unauthorized();
     if (actor.Role is not ("Reader" or "Staff" or "Admin")) return Results.StatusCode(403);
@@ -2954,7 +3010,7 @@ app.MapGet("/api/borrow-requests/books", async (string? query, HttpRequest reque
 app.MapGet("/api/borrow-requests", async (HttpRequest request, SessionService sessions,
     IConfiguration config, CancellationToken ct) =>
 {
-    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    if (!ProductionAccess.IsEnabled(app)) return Results.NotFound();
     var actor = sessions.Validate(ReadBearerToken(request));
     if (actor is null) return Results.Unauthorized();
     if (actor.Role is not ("Reader" or "Staff" or "Admin")) return Results.StatusCode(403);
@@ -3030,7 +3086,7 @@ app.MapGet("/api/borrow-requests", async (HttpRequest request, SessionService se
 app.MapPost("/api/borrow-requests", async (NewBorrowRequest input, HttpRequest request,
     SessionService sessions, IConfiguration config, CancellationToken ct) =>
 {
-    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    if (!ProductionAccess.IsEnabled(app)) return Results.NotFound();
     var actor = sessions.Validate(ReadBearerToken(request));
     if (actor is null) return Results.Unauthorized();
     if (actor.Role != "Reader") return Results.StatusCode(403);
@@ -3142,7 +3198,7 @@ app.MapPost("/api/borrow-requests/{requestId:long}/review", async (
     long requestId, ReviewBorrowRequest body, HttpRequest request,
     SessionService sessions, IConfiguration config, CancellationToken ct) =>
 {
-    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    if (!ProductionAccess.IsEnabled(app)) return Results.NotFound();
     var actor = sessions.Validate(ReadBearerToken(request));
     if (actor is null) return Results.Unauthorized();
     if (actor.Role is not ("Staff" or "Admin")) return Results.StatusCode(403);
@@ -3362,7 +3418,7 @@ app.MapPost("/api/borrow-requests/{requestId:long}/review", async (
 app.MapGet("/api/notifications", async (HttpRequest request, SessionService sessions,
     IConfiguration configuration, CancellationToken ct) =>
 {
-    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    if (!ProductionAccess.IsEnabled(app)) return Results.NotFound();
     var actor = sessions.Validate(ReadBearerToken(request));
     if (actor is null) return Results.Unauthorized();
     if (actor.Role != "Reader") return Results.StatusCode(403);
@@ -3416,7 +3472,7 @@ app.MapGet("/api/notifications", async (HttpRequest request, SessionService sess
 app.MapPost("/api/notifications/{notificationId:long}/read", async (long notificationId,
     HttpRequest request, SessionService sessions, IConfiguration configuration, CancellationToken ct) =>
 {
-    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    if (!ProductionAccess.IsEnabled(app)) return Results.NotFound();
     var actor = sessions.Validate(ReadBearerToken(request));
     if (actor is null) return Results.Unauthorized();
     if (actor.Role != "Reader") return Results.StatusCode(403);
@@ -3447,7 +3503,7 @@ app.MapPost("/api/notifications/{notificationId:long}/read", async (long notific
 app.MapPost("/api/notifications/read-all", async (HttpRequest request, SessionService sessions,
     IConfiguration configuration, CancellationToken ct) =>
 {
-    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    if (!ProductionAccess.IsEnabled(app)) return Results.NotFound();
     var actor = sessions.Validate(ReadBearerToken(request));
     if (actor is null) return Results.Unauthorized();
     if (actor.Role != "Reader") return Results.StatusCode(403);
@@ -3477,7 +3533,7 @@ app.MapPost("/api/notifications/read-all", async (HttpRequest request, SessionSe
 app.MapGet("/api/loan-renewals", async (HttpRequest request, SessionService sessions,
     IConfiguration configuration, CancellationToken ct) =>
 {
-    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    if (!ProductionAccess.IsEnabled(app)) return Results.NotFound();
     var actor = sessions.Validate(ReadBearerToken(request));
     if (actor is null) return Results.Unauthorized();
     if (actor.Role is not ("Reader" or "Staff" or "Admin")) return Results.StatusCode(403);
@@ -3532,7 +3588,7 @@ app.MapGet("/api/loan-renewals", async (HttpRequest request, SessionService sess
 app.MapPost("/api/loan-renewals/request", async (NewLoanRenewalRequest input, HttpRequest request,
     SessionService sessions, IConfiguration configuration, CancellationToken ct) =>
 {
-    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    if (!ProductionAccess.IsEnabled(app)) return Results.NotFound();
     var actor = sessions.Validate(ReadBearerToken(request));
     if (actor is null) return Results.Unauthorized();
     if (actor.Role != "Reader") return Results.StatusCode(403);
@@ -3613,7 +3669,7 @@ app.MapPost("/api/loan-renewals/{requestId:long}/review", async (long requestId,
     ReviewBorrowRequest input, HttpRequest request, SessionService sessions,
     IConfiguration configuration, CancellationToken ct) =>
 {
-    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    if (!ProductionAccess.IsEnabled(app)) return Results.NotFound();
     var actor = sessions.Validate(ReadBearerToken(request));
     if (actor is null) return Results.Unauthorized();
     if (actor.Role is not ("Staff" or "Admin")) return Results.StatusCode(403);
@@ -3765,7 +3821,7 @@ app.MapPost("/api/loan-renewals/{requestId:long}/review", async (long requestId,
 app.MapPost("/api/loan-renewals/{requestId:long}/cancel", async (long requestId,
     HttpRequest request, SessionService sessions, IConfiguration configuration, CancellationToken ct) =>
 {
-    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    if (!ProductionAccess.IsEnabled(app)) return Results.NotFound();
     var actor = sessions.Validate(ReadBearerToken(request));
     if (actor is null) return Results.Unauthorized();
     if (actor.Role != "Reader") return Results.StatusCode(403);
@@ -3799,7 +3855,7 @@ app.MapPost("/api/loan-renewals/{requestId:long}/cancel", async (long requestId,
 app.MapPost("/api/borrow-requests/{requestId:long}/cancel", async (
     long requestId, HttpRequest request, SessionService sessions, IConfiguration config, CancellationToken ct) =>
 {
-    if (!app.Environment.IsDevelopment()) return Results.NotFound();
+    if (!ProductionAccess.IsEnabled(app)) return Results.NotFound();
     var actor = sessions.Validate(ReadBearerToken(request));
     if (actor is null) return Results.Unauthorized();
     if (actor.Role != "Reader") return Results.StatusCode(403);
@@ -3838,6 +3894,7 @@ app.MapPost("/api/borrow-requests/{requestId:long}/cancel", async (
     }
 });
 
+app.MapGet("/", () => Results.Ok(new { service = "SmartLibrary.Api", environment = "Production-ready gateway", health = "/api/health" }));
 app.Run();
 
 // Du lieu JSON nhan tu WPF hoac Postman/PowerShell.

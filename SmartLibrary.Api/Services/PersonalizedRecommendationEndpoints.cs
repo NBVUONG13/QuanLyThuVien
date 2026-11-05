@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
 using Npgsql;
@@ -19,7 +19,7 @@ public static class PersonalizedRecommendationEndpoints
         app.MapGet("/api/reader/recommendations", async (
             HttpRequest req, SessionService sessions, IConfiguration config, CancellationToken ct) =>
         {
-            if (!app.Environment.IsDevelopment()) return Results.NotFound();
+            if (!ProductionAccess.IsEnabled(app)) return Results.NotFound();
             var session = sessions.Validate(Bearer(req));
             if (session is null) return Results.Unauthorized();
             if (session.Role != "Reader") return Results.StatusCode(StatusCodes.Status403Forbidden);

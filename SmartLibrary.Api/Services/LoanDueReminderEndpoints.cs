@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Builder;
@@ -19,7 +19,7 @@ public static class LoanDueReminderEndpoints
             HttpRequest request, SessionService sessions, IConfiguration configuration,
             CancellationToken ct) =>
         {
-            if (!app.Environment.IsDevelopment()) return Results.NotFound();
+            if (!ProductionAccess.IsEnabled(app)) return Results.NotFound();
             var actor = sessions.Validate(Bearer(request));
             if (actor is null) return Results.Unauthorized();
             if (actor.Role != "Reader") return Results.StatusCode(StatusCodes.Status403Forbidden);

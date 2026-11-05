@@ -1,4 +1,4 @@
-﻿using System.Globalization;
+using System.Globalization;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Npgsql;
@@ -15,7 +15,7 @@ public static class LibraryReportsEndpoints
         app.MapGet("/api/admin/library-reports", async (HttpRequest request,
             SessionService sessions, IConfiguration config, CancellationToken ct) =>
         {
-            if (!app.Environment.IsDevelopment()) return Results.NotFound();
+            if (!ProductionAccess.IsEnabled(app)) return Results.NotFound();
             var actor = sessions.Validate(Bearer(request));
             if (actor is null) return Results.Unauthorized();
             if (actor.Role != "Admin") return Results.StatusCode(403);
