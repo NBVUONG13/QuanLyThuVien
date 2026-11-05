@@ -9,7 +9,7 @@ namespace QuanLyThuVien.ViewModels
     public sealed class RegisterViewModel : MvvmBase
     {
         private readonly RegistrationApiClient _api = new RegistrationApiClient();
-        private string _fullName = "", _username = "", _phone = "", _otp = "";
+        private string _fullName = "", _username = "", _phone = "", _email = "", _otp = "";
         private string _guestClaimCode = "";
         private string _message = "Nhập thông tin rồi chọn TẠO TÀI KHOẢN.";
         private Guid _requestId;
@@ -19,10 +19,12 @@ namespace QuanLyThuVien.ViewModels
             StartCommand = new AsyncCommand(p => StartAsync(p as Tuple<string, string>), p => CanStart);
             ConfirmCommand = new AsyncCommand(_ => ConfirmAsync(), _ => CanConfirm);
             PreviewGuestCommand = new AsyncCommand(_ => PreviewGuestAsync(), _ => CanPreviewGuest);
+            ResetCommand = new AsyncCommand(_ => ResetOtpAsync(), _ => !Busy && !Completed && _requestId != Guid.Empty);
         }
         public string FullName { get => _fullName; set => Set(ref _fullName, value); }
         public string Username { get => _username; set => Set(ref _username, value); }
         public string Phone { get => _phone; set => Set(ref _phone, value); }
+        public string Email { get => _email; set => Set(ref _email, value); }
         public string GuestClaimCode
         {
             get => _guestClaimCode;
@@ -42,6 +44,15 @@ namespace QuanLyThuVien.ViewModels
         public ICommand StartCommand { get; }
         public ICommand ConfirmCommand { get; }
         public ICommand PreviewGuestCommand { get; }
+        public ICommand ResetCommand { get; }
+        private Task ResetOtpAsync()
+        {
+            _requestId = Guid.Empty;
+            Otp = "";
+            Message = "Đã trở lại biểu mẫu. Chờ mã cũ hết hạn (5 phút) trước khi gửi yêu cầu mới.";
+            RefreshState();
+            return Task.CompletedTask;
+        }
         private void RefreshState()
         {
             Notify(nameof(CanEdit)); Notify(nameof(CanEditPhone)); Notify(nameof(CanStart));
@@ -49,6 +60,7 @@ namespace QuanLyThuVien.ViewModels
             (StartCommand as AsyncCommand)?.Refresh();
             (ConfirmCommand as AsyncCommand)?.Refresh();
             (PreviewGuestCommand as AsyncCommand)?.Refresh();
+            (ResetCommand as AsyncCommand)?.Refresh();
         }
         private void InvalidateGuestPreview()
         {
@@ -87,8 +99,11 @@ namespace QuanLyThuVien.ViewModels
             string password = passwords?.Item1;
             string confirmation = passwords?.Item2;
             if (string.IsNullOrWhiteSpace(FullName) || string.IsNullOrWhiteSpace(Username) ||
-                string.IsNullOrWhiteSpace(Phone) || string.IsNullOrWhiteSpace(password))
-            { Message = "Vui lòng nhập đầy đủ họ tên, tài khoản, SĐT và mật khẩu."; return; }
+                string.IsNullOrWhiteSpace(Phone) || string.IsNullOrWhiteSpace(Email) ||
+                string.IsNullOrWhiteSpace(password))
+            { Message = "Vui lòng nhập đầy đủ họ tên, tài khoản, SĐT, email và mật khẩu."; return; }
+            if (!System.Text.RegularExpressions.Regex.IsMatch(Email.Trim(), @"\A[^@\s]+@[^@\s]+\.[^@\s]+\z"))
+            { Message = "Email không hợp lệ."; return; }
             if (!string.Equals(password, confirmation, StringComparison.Ordinal))
             { Message = "Hai lần nhập mật khẩu không trùng nhau."; return; }
             // Registration policy currently enforced in RegistrationService/API, not the admin 5-char policy.
@@ -99,12 +114,12 @@ namespace QuanLyThuVien.ViewModels
             Busy = true; Message = "Đang gửi yêu cầu đăng ký...";
             try
             {
-                var r = await _api.StartAsync(FullName.Trim(), Username.Trim(), Phone.Trim(), password,
+                var r = await _api.StartAsync(FullName.Trim(), Username.Trim(), Phone.Trim(), Email.Trim(), password,
                     GuestClaimCode);
                 if (!r.IsSuccess) { Message = r.Message; return; }
                 _requestId = r.RequestId;
                 RefreshState();
-                Message = "Đã tạo yêu cầu. Xem OTP ở cửa sổ API local (không gửi SMS).";
+                Message = r.Message;
             }
             catch (Exception) { Message = "Không thể tạo yêu cầu đăng ký."; }
             finally { Busy = false; }

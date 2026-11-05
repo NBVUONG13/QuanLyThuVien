@@ -32,6 +32,9 @@ else
 builder.Services.AddScoped<AuthService>();
 // Quan trong: OTP tam luu tren RAM, phai dung Singleton giua /start va /confirm.
 builder.Services.AddSingleton<RegistrationService>();
+// Email OTP registration: Resend HTTPS and pending challenges persisted in Aiven.
+builder.Services.AddHttpClient<ResendOtpEmailSender>();
+builder.Services.AddScoped<EmailRegistrationService>();
 // Development sessions RAM; Production sessions persisted in Aiven (hashed tokens).
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddSingleton<SessionService>();
@@ -40,6 +43,24 @@ builder.Services.AddSingleton<SessionService>();
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.AddPolicy("register", request => RateLimitPartition.GetFixedWindowLimiter(
+        request.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+        _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = 20,
+            Window = TimeSpan.FromMinutes(5),
+            QueueLimit = 0,
+            AutoReplenishment = true
+        }));
+    options.AddPolicy("otp-verify", request => RateLimitPartition.GetFixedWindowLimiter(
+        request.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+        _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = 120,
+            Window = TimeSpan.FromMinutes(5),
+            QueueLimit = 0,
+            AutoReplenishment = true
+        }));
     options.AddPolicy("login", request => RateLimitPartition.GetFixedWindowLimiter(
         request.Connection.RemoteIpAddress?.ToString() ?? "unknown",
         _ => new FixedWindowRateLimiterOptions
@@ -91,7 +112,9 @@ app.Use(async (context, next) =>
         return;
     }
     if (app.Environment.IsDevelopment() ||
-        path.Equals("/api/auth/login", StringComparison.OrdinalIgnoreCase))
+        path.Equals("/api/auth/login", StringComparison.OrdinalIgnoreCase) ||
+        path.Equals("/api/auth/email-register/start", StringComparison.OrdinalIgnoreCase) ||
+        path.Equals("/api/auth/email-register/confirm", StringComparison.OrdinalIgnoreCase))
     {
         await next();
         return;
@@ -109,6 +132,8 @@ app.Use(async (context, next) =>
 });
 
 // Step 75: Admin policy UI endpoints live in their own module.
+// Self-service Reader registration with verified email, available in Production when API is enabled.
+app.MapEmailRegistrationEndpoints();
 app.MapLibraryPolicyEndpoints();
 // Step 77: Quan ly dau sach, nhap kho va xu ly sach mat/hong.
 app.MapBookInventoryEndpoints();

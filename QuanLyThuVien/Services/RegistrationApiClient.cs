@@ -10,18 +10,17 @@ using System.Threading.Tasks;
 
 namespace QuanLyThuVien.Services
 {
-    // Client WPF .NET Framework 4.7.2. API dang ky chi duoc bat o Development.
-    // OTP duoc in tai console API; day KHONG phai xac minh so dien thoai qua SMS that.
+    // WPF .NET Framework 4.7.2: self-service signup via email OTP on Render.
+    // No API/email secrets are stored in WPF.
     public sealed class RegistrationApiClient
     {
         private static bool IsCloudApi =>
             !new Uri(global::QuanLyThuVien.App.ApiBaseUrl).IsLoopback;
-        private const string RegistrationUnavailable =
-            "Đăng ký/OTP trên cloud chưa được bật vì chưa tích hợp SMS xác minh thật. " +
-            "Hãy dùng tài khoản do quản trị viên cấp.";
+        private const string GuestUnavailable =
+            "Liên kết Guest trên cloud yêu cầu Staff xác minh tại quầy; chưa hỗ trợ qua email.";
 
-        private static readonly string StartUrl = global::QuanLyThuVien.App.ApiBaseUrl + "/api/auth/register/start";
-        private static readonly string ConfirmUrl = global::QuanLyThuVien.App.ApiBaseUrl + "/api/auth/register/confirm";
+        private static readonly string StartUrl = global::QuanLyThuVien.App.ApiBaseUrl + "/api/auth/email-register/start";
+        private static readonly string ConfirmUrl = global::QuanLyThuVien.App.ApiBaseUrl + "/api/auth/email-register/confirm";
         private static readonly string PreviewUrl = global::QuanLyThuVien.App.ApiBaseUrl + "/api/auth/register/guest-preview";
 
         private static readonly HttpClient Http = new HttpClient
@@ -33,7 +32,7 @@ namespace QuanLyThuVien.Services
             string guestClaimCode,
             CancellationToken cancellationToken = default(CancellationToken))
         {
-            if (IsCloudApi) return GuestPreviewResult.Failure(RegistrationUnavailable);
+            if (IsCloudApi) return GuestPreviewResult.Failure(GuestUnavailable);
             if (string.IsNullOrWhiteSpace(guestClaimCode) ||
                 !System.Text.RegularExpressions.Regex.IsMatch(guestClaimCode.Trim(), @"\A[0-9]{8}\z"))
                 return GuestPreviewResult.Failure("Nhập đúng mã liên kết 8 số do Staff cấp.");
@@ -63,12 +62,14 @@ namespace QuanLyThuVien.Services
         }
 
         public async Task<RegistrationStartResult> StartAsync(
-            string fullName, string username, string phone, string password,
+            string fullName, string username, string phone, string email, string password,
             string guestClaimCode,
             CancellationToken cancellationToken = default(CancellationToken))
         {
-            if (IsCloudApi) return RegistrationStartResult.Failure(RegistrationUnavailable);
-            if (string.IsNullOrWhiteSpace(fullName) ||
+            if (!string.IsNullOrWhiteSpace(guestClaimCode))
+                return RegistrationStartResult.Failure(GuestUnavailable);
+            if (string.IsNullOrWhiteSpace(email) ||
+                string.IsNullOrWhiteSpace(fullName) ||
                 string.IsNullOrWhiteSpace(username) ||
                 string.IsNullOrWhiteSpace(phone) ||
                 string.IsNullOrWhiteSpace(password))
@@ -81,6 +82,7 @@ namespace QuanLyThuVien.Services
                 FullName = fullName.Trim(),
                 Username = username.Trim(),
                 Phone = phone.Trim(),
+                Email = email.Trim(),
                 Password = password,
                 GuestClaimCode = guestClaimCode == null ? "" : guestClaimCode.Trim()
             };
@@ -97,7 +99,7 @@ namespace QuanLyThuVien.Services
                         return RegistrationStartResult.Failure(GetErrorMessage(response, body));
 
                     var result = Deserialize<StartResponse>(body);
-                    if (result == null || result.Message != "dev_otp_created" ||
+                    if (result == null || result.Message != "email_otp_sent" ||
                         result.RequestId == Guid.Empty)
                     {
                         return RegistrationStartResult.Failure(
@@ -107,13 +109,13 @@ namespace QuanLyThuVien.Services
                     return RegistrationStartResult.Success(
                         result.RequestId,
                         result.ExpiresAt,
-                        "Đã tạo yêu cầu. Xem mã OTP trong cửa sổ API (chỉ thử nghiệm).");
+                        "Đã gửi OTP tới email. Kiểm tra Hộp thư đến và Spam (mã có hạn 5 phút).");
                 }
             }
             catch (HttpRequestException)
             {
                 return RegistrationStartResult.Failure(
-                    "Không kết nối được API. Hãy chạy SmartLibrary.Api trước.");
+                    "Không kết nối được API Render. Kiểm tra Internet/địa chỉ server.");
             }
             catch (TaskCanceledException)
             {
@@ -133,7 +135,6 @@ namespace QuanLyThuVien.Services
             Guid requestId, string otp,
             CancellationToken cancellationToken = default(CancellationToken))
         {
-            if (IsCloudApi) return RegistrationConfirmResult.Failure(RegistrationUnavailable);
             if (requestId == Guid.Empty || string.IsNullOrWhiteSpace(otp) ||
                 otp.Length != 6)
                 return RegistrationConfirmResult.Failure("Hãy nhập đúng mã OTP gồm 6 chữ số.");
@@ -151,7 +152,7 @@ namespace QuanLyThuVien.Services
                         return RegistrationConfirmResult.Failure(GetErrorMessage(response, body));
 
                     var result = Deserialize<ConfirmResponse>(body);
-                    if (result == null || result.Message != "registration_completed_dev_only" ||
+                    if (result == null || result.Message != "registration_completed" ||
                         result.UserId <= 0 || result.Role != "Reader")
                         return RegistrationConfirmResult.Failure(
                             "API trả về kết quả đăng ký không hợp lệ.");
@@ -163,7 +164,7 @@ namespace QuanLyThuVien.Services
             catch (HttpRequestException)
             {
                 return RegistrationConfirmResult.Failure(
-                    "Không kết nối được API. Hãy chạy SmartLibrary.Api trước.");
+                    "Không kết nối được API Render. Kiểm tra Internet/địa chỉ server.");
             }
             catch (TaskCanceledException)
             {
@@ -202,7 +203,7 @@ namespace QuanLyThuVien.Services
             catch (FormatException) { }
 
             if (response.StatusCode == HttpStatusCode.NotFound)
-                return "API đăng ký chưa được bật. Hãy chạy API ở môi trường Development.";
+                return "API đăng ký email chưa được triển khai hoặc chưa bật trên Render.";
             return "API từ chối yêu cầu (HTTP " + (int)response.StatusCode + ").";
         }
 
@@ -245,6 +246,7 @@ namespace QuanLyThuVien.Services
             [DataMember(Name = "fullName")] public string FullName { get; set; }
             [DataMember(Name = "username")] public string Username { get; set; }
             [DataMember(Name = "phone")] public string Phone { get; set; }
+            [DataMember(Name = "email")] public string Email { get; set; }
             [DataMember(Name = "password")] public string Password { get; set; }
             [DataMember(Name = "guestClaimCode")] public string GuestClaimCode { get; set; }
         }
@@ -321,7 +323,7 @@ namespace QuanLyThuVien.Services
                 UserId = userId,
                 Username = username,
                 Role = role,
-                Message = "Đăng ký Reader hoàn tất (chỉ thử nghiệm OTP local)."
+                Message = "Xác minh email thành công. Tài khoản Reader đã được tạo."
             };
         }
 
