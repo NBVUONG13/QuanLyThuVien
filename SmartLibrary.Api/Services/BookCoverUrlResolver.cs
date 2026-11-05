@@ -4,8 +4,8 @@ using System.Text.RegularExpressions;
 
 namespace SmartLibrary.Api.Services;
 
-// Book cover URLs for the LOCAL development API. Database values stay unchanged.
-// If the local file is missing, use wwwroot/covers/sachdemo.jpg.
+// Cloudinary URL is stored in books.cover_url, public_id in cover_object_key.
+// Legacy local files and already-existing HTTPS image URLs keep working.
 public static class BookCoverUrlResolver
 {
     public const string LocalBaseUrl = "http://127.0.0.1:5082";
@@ -18,37 +18,37 @@ public static class BookCoverUrlResolver
         IConfiguration configuration, IWebHostEnvironment environment)
     {
         string value = (coverUrl ?? "").Trim();
+        if (Uri.TryCreate(value, UriKind.Absolute, out var uri) &&
+            (uri.Scheme == Uri.UriSchemeHttps ||
+             (uri.Scheme == Uri.UriSchemeHttp && uri.IsLoopback)) &&
+            uri.UserInfo.Length == 0)
+            return uri.AbsoluteUri;
+
         if (LocalCoverPattern.IsMatch(value) && LocalFileExists(value, environment))
             return LocalBaseUrl + value;
 
-        // Preserve support for an existing HTTPS CDN link, if one was stored in cover_url.
-        if (Uri.TryCreate(value, UriKind.Absolute, out Uri? full) &&
-            (full.Scheme == Uri.UriSchemeHttps ||
-             (full.Scheme == Uri.UriSchemeHttp && full.IsLoopback)))
-            return full.AbsoluteUri;
-
-        // Keep the existing cover_object_key + BookCovers:PublicBaseUrl contract for R2.
+        // Transitional compatibility for pre-existing R2 object keys, if configured.
         string key = (coverObjectKey ?? "").Trim();
-        string cdnBase = (configuration["BookCovers:PublicBaseUrl"] ?? "").Trim();
-        if (Uri.TryCreate(cdnBase, UriKind.Absolute, out Uri? cdn) &&
-            cdn.Scheme == Uri.UriSchemeHttps && key.Length > 0 &&
-            !key.StartsWith('/') && !key.Contains('\\') &&
-            !key.Contains('?') && !key.Contains('#'))
-        {
-            string[] parts = key.Split('/');
-            if (parts.All(p => p.Length > 0 && p != "." && p != ".." && !p.Contains(':')))
-                return cdnBase.TrimEnd('/') + "/" +
-                    string.Join("/", parts.Select(Uri.EscapeDataString));
-        }
+        string r2Base = (configuration["BookCovers:PublicBaseUrl"] ?? "").Trim();
+        if (IsSafeObjectKey(key) && key.StartsWith("covers/", StringComparison.Ordinal) &&
+            Uri.TryCreate(r2Base, UriKind.Absolute, out var cdn) &&
+            cdn.Scheme == Uri.UriSchemeHttps && cdn.UserInfo.Length == 0)
+            return r2Base.TrimEnd('/') + "/" +
+                string.Join("/", key.Split('/').Select(Uri.EscapeDataString));
 
         return LocalBaseUrl + DefaultCover;
     }
 
-    private static bool LocalFileExists(string relativePath, IWebHostEnvironment environment)
+    private static bool IsSafeObjectKey(string key)
     {
-        // Pattern above guarantees a single filename below covers; cannot traverse folders.
-        string fileName = relativePath["/covers/".Length..];
-        string path = Path.Combine(environment.ContentRootPath, "wwwroot", "covers", fileName);
-        return File.Exists(path);
+        if (key.Length == 0 || key.Length > 512 || key.StartsWith('/') ||
+            key.Contains('\\') || key.Contains('?') || key.Contains('#')) return false;
+        return key.Split('/').All(p => p.Length > 0 && p != "." && p != ".." && !p.Contains(':'));
+    }
+
+    private static bool LocalFileExists(string relative, IWebHostEnvironment environment)
+    {
+        string file = relative["/covers/".Length..];
+        return File.Exists(Path.Combine(environment.ContentRootPath, "wwwroot", "covers", file));
     }
 }

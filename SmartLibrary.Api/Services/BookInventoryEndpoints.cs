@@ -140,13 +140,15 @@ public static class BookInventoryEndpoints
             return await SaveBook(app, body, bookId, req, sessions, config, autoEmbeddings, ct);
         });
 
-        // Staff/Admin upload a real cover image from WPF, not a user-supplied file path/URL.
-        // The filename is generated on the server; no additional NuGet package or table is needed.
+        // WPF retains the same multipart endpoint; images now go to Cloudinary.
+        // New book and metadata are saved separately before uploading its cover.
         app.MapPost("/api/inventory/books/{bookId:long}/cover", async (
             long bookId, HttpRequest req, SessionService sessions, IConfiguration config, CancellationToken ct) =>
         {
             var denied = Guard(app, req, sessions);
             if (denied is not null) return denied;
+            if (!CloudinaryBookCoverStorage.IsConfigured(config))
+                return Results.Json(new { message = "Chưa cấu hình Cloudinary. Xem hướng dẫn User Secrets." }, statusCode: 503);
 
             const long maxImageBytes = 5L * 1024 * 1024;
             if (!req.HasFormContentType ||
@@ -159,25 +161,22 @@ public static class BookInventoryEndpoints
                 var form = await req.ReadFormAsync(ct);
                 cover = form.Files.Count == 1 ? form.Files.GetFile("cover") : null;
             }
-            catch (InvalidDataException)
+            catch (Exception ex) when (ex is InvalidDataException or BadHttpRequestException)
             {
-                return Results.BadRequest(new { message = "Dữ liệu ảnh không hợp lệ hoặc quá lớn." });
+                return Results.BadRequest(new { message = "Ảnh hoặc biểu mẫu không hợp lệ." });
             }
 
-            if (cover is null || cover.Length == 0 || cover.Length > maxImageBytes)
-                return Results.BadRequest(new { message = "Chọn đúng một ảnh, dung lượng 1 byte đến 5 MB." });
+            if (cover is null || cover.Length < 12 || cover.Length > maxImageBytes)
+                return Results.BadRequest(new { message = "Cần một ảnh JPG, PNG hoặc WebP, tối đa 5 MB." });
             string ext = Path.GetExtension(cover.FileName).ToLowerInvariant();
             if (ext is not (".jpg" or ".jpeg" or ".png" or ".webp"))
-                return Results.BadRequest(new { message = "Chỉ hỗ trợ ảnh .jpg, .jpeg, .png, .webp." });
+                return Results.BadRequest(new { message = "Chỉ nhận JPG, PNG hoặc WebP." });
 
-            string root = Path.Combine(app.Environment.ContentRootPath, "wwwroot", "covers");
-            string filename = $"book-{bookId}-{Guid.NewGuid():N}{ext}";
-            string filePath = Path.Combine(root, filename);
-            string relativeCoverUrl = "/covers/" + filename;
+            string mime = CoverMimeType(ext);
+            string? uploadedKey = null;
             bool committed = false;
             try
             {
-                // Check book existence before writing a file; no orphan image for invalid IDs.
                 await using var db = await Connect(config, ct);
                 await using (var exists = new NpgsqlCommand(
                     "SELECT 1 FROM public.books WHERE book_id=@id;", db))
@@ -186,55 +185,167 @@ public static class BookInventoryEndpoints
                     if (await exists.ExecuteScalarAsync(ct) is null) return Results.NotFound();
                 }
 
-                Directory.CreateDirectory(root);
-                await using (var output = new FileStream(filePath, FileMode.CreateNew,
-                    FileAccess.Write, FileShare.None, 81920, useAsync: true))
-                {
-                    await cover.CopyToAsync(output, ct);
-                }
-                // Match file header as well as extension. SVG/HTML/executables are never accepted.
-                if (!ValidCoverHeader(filePath, ext))
-                    return Results.BadRequest(new { message = "Nội dung file không khớp định dạng ảnh đã chọn." });
+                await using var image = new MemoryStream(capacity: (int)cover.Length);
+                await cover.CopyToAsync(image, ct);
+                if (image.Length != cover.Length || !ValidCoverHeader(image.GetBuffer().AsSpan(0, 12), ext))
+                    return Results.BadRequest(new { message = "Dữ liệu không khớp định dạng ảnh." });
+                image.Position = 0;
+
+                string key = $"smartlibrary/covers/books/{bookId}/{Guid.NewGuid():N}";
+                using var cloudinary = new CloudinaryBookCoverStorage(config);
+                var uploaded = await cloudinary.UploadAsync(key, image, mime, ct);
+                string publicUrl = uploaded.SecureUrl;
+                uploadedKey = key;
 
                 await using var tx = await db.BeginTransactionAsync(ct);
                 await using (var update = new NpgsqlCommand(@"
-                    UPDATE public.books SET cover_url=@cover
-                    WHERE book_id=@book RETURNING book_id;", db, tx))
+                    UPDATE public.books SET cover_url=@url,cover_object_key=@key
+                    WHERE book_id=@id RETURNING book_id;", db, tx))
                 {
-                    update.Parameters.AddWithValue("book", bookId);
-                    update.Parameters.AddWithValue("cover", relativeCoverUrl);
+                    update.Parameters.AddWithValue("id", bookId);
+                    update.Parameters.AddWithValue("url", publicUrl);
+                    update.Parameters.AddWithValue("key", key);
                     if (await update.ExecuteScalarAsync(ct) is null)
                         return Results.NotFound();
                 }
                 await Audit(db, tx, sessions.Validate(Bearer(req))!.UserId,
                     "book_cover_updated", "books", bookId.ToString(),
-                    new { coverUrl = relativeCoverUrl }, ct);
+                    new { coverObjectKey = key }, ct);
                 await tx.CommitAsync(ct);
                 committed = true;
-                // New filename avoids stale image caches on home, search, and details.
                 return Results.Ok(new
                 {
-                    message = "Đã cập nhật ảnh bìa sách.",
-                    coverUrl = BookCoverUrlResolver.Resolve(relativeCoverUrl, null, config, app.Environment)
+                    message = "Đã tải ảnh bìa lên Cloudinary.",
+                    coverUrl = publicUrl,
+                    coverObjectKey = key
                 });
             }
-            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
-            {
-                app.Logger.LogWarning("Cover storage failed: {Type}", ex.GetType().Name);
-                return Results.Json(new { message = "Không thể lưu ảnh. Kiểm tra quyền ghi wwwroot/covers." }, statusCode: 503);
-            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
             catch (Exception ex)
             {
-                return Failed(app, ex, "Không cập nhật được ảnh bìa.");
+                app.Logger.LogError("Cloudinary book cover upload failed: {Type}", ex.GetType().Name);
+                return Results.Json(new { message = "Tải ảnh lên Cloudinary hoặc lưu Aiven thất bại. Kiểm tra cấu hình Cloudinary và log API." }, statusCode: 503);
             }
             finally
             {
-                // Failed requests cannot leave an unreferenced uploaded file.
-                if (!committed && File.Exists(filePath))
+                if (!committed && uploadedKey is not null)
                 {
-                    try { File.Delete(filePath); } catch (IOException) { }
+                    try
+                    {
+                        using var cleanup = new CloudinaryBookCoverStorage(config);
+                        await cleanup.DeleteAsync(uploadedKey, CancellationToken.None);
+                    }
+                    catch (Exception ex)
+                    {
+                        app.Logger.LogWarning("Cloudinary cover cleanup failed: {Type}", ex.GetType().Name);
+                    }
                 }
             }
+        });
+
+        // Admin-only, one-time move for the images already under wwwroot/covers.
+        // Idempotent: previously migrated covers are skipped; local files are preserved.
+        app.MapPost("/api/admin/book-covers/migrate-to-cloudinary", async (
+            HttpRequest req, SessionService sessions, IConfiguration config, CancellationToken ct) =>
+        {
+            var denied = Guard(app, req, sessions);
+            if (denied is not null) return denied;
+            var actor = sessions.Validate(Bearer(req));
+            if (actor is null || actor.Role != "Admin") return Results.StatusCode(403);
+            if (!CloudinaryBookCoverStorage.IsConfigured(config))
+                return Results.Json(new { message = "Chưa cấu hình Cloudinary." }, statusCode: 503);
+
+            try
+            {
+                await using var db = await Connect(config, ct);
+                // Excludes covers that are already on a CDN or have been migrated.
+                var candidates = new List<(long Id, string Original)>();
+                await using (var cmd = new NpgsqlCommand(@"
+                    SELECT book_id,cover_url FROM public.books
+                    WHERE NULLIF(BTRIM(COALESCE(cover_object_key,'')),'') IS NULL
+                      AND (cover_url LIKE '/covers/%'
+                           OR cover_url LIKE 'http://127.0.0.1:5082/covers/%')
+                    ORDER BY book_id LIMIT 100;", db))
+                await using (var rd = await cmd.ExecuteReaderAsync(ct))
+                {
+                    while (await rd.ReadAsync(ct))
+                        candidates.Add((rd.GetInt64(0), rd.GetString(1)));
+                }
+
+                using var cloudinary = new CloudinaryBookCoverStorage(config);
+                int moved = 0, missing = 0, failed = 0, skipped = 0;
+                var problemBookIds = new List<long>();
+                foreach (var candidate in candidates)
+                {
+                    if (!TryLegacyCoverFileName(candidate.Original, out var fileName))
+                    {
+                        skipped++;
+                        continue;
+                    }
+                    string path = Path.Combine(app.Environment.ContentRootPath,
+                        "wwwroot", "covers", fileName);
+                    if (!File.Exists(path)) { missing++; problemBookIds.Add(candidate.Id); continue; }
+                    try
+                    {
+                        var ext = Path.GetExtension(fileName).ToLowerInvariant();
+                        await using var content = File.OpenRead(path);
+                        if (content.Length is < 12 or > 5L * 1024 * 1024)
+                        { failed++; problemBookIds.Add(candidate.Id); continue; }
+                        var header = new byte[12];
+                        if (await content.ReadAsync(header, ct) != 12 || !ValidCoverHeader(header, ext))
+                        { failed++; problemBookIds.Add(candidate.Id); continue; }
+                        content.Position = 0;
+                        string key = $"smartlibrary/covers/legacy/{candidate.Id}/{Guid.NewGuid():N}";
+                        var uploaded = await cloudinary.UploadAsync(key, content, CoverMimeType(ext), ct);
+                        string publicUrl = uploaded.SecureUrl;
+
+                        await using var tx = await db.BeginTransactionAsync(ct);
+                        await using var update = new NpgsqlCommand(@"
+                            UPDATE public.books SET cover_url=@url,cover_object_key=@key
+                            WHERE book_id=@id AND cover_url=@old
+                              AND NULLIF(BTRIM(COALESCE(cover_object_key,'')),'') IS NULL;", db, tx);
+                        update.Parameters.AddWithValue("id", candidate.Id);
+                        update.Parameters.AddWithValue("old", candidate.Original);
+                        update.Parameters.AddWithValue("url", publicUrl);
+                        update.Parameters.AddWithValue("key", key);
+                        int updated = await update.ExecuteNonQueryAsync(ct);
+                        if (updated == 1)
+                            await Audit(db, tx, actor.UserId, "book_cover_migrated_to_cloudinary",
+                                "books", candidate.Id.ToString(), new { coverObjectKey = key }, ct);
+                        await tx.CommitAsync(ct);
+                        if (updated == 1) moved++;
+                        else
+                        {
+                            skipped++;
+                            try { await cloudinary.DeleteAsync(key, CancellationToken.None); }
+                            catch (Exception cleanupEx)
+                            {
+                                app.Logger.LogWarning("Cloudinary orphan cleanup failed: {Type}",
+                                    cleanupEx.GetType().Name);
+                            }
+                        }
+                    }
+                    catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+                    catch (Exception ex)
+                    {
+                        app.Logger.LogWarning("Cloudinary migration failed for book {Id}: {Type}",
+                            candidate.Id, ex.GetType().Name);
+                        failed++;
+                        problemBookIds.Add(candidate.Id);
+                    }
+                }
+                return Results.Ok(new
+                {
+                    scanned = candidates.Count,
+                    migrated = moved,
+                    missingLocalFiles = missing,
+                    failed,
+                    skipped,
+                    problemBookIds,
+                    message = "Đã chuyển các ảnh có sẵn sang Cloudinary. Ảnh local vẫn được giữ lại."
+                });
+            }
+            catch (Exception ex) { return Failed(app, ex, "Không chuyển được ảnh lên Cloudinary."); }
         });
 
         // Server-generated unique copy codes; never change a physical quantity counter by hand.
@@ -552,11 +663,17 @@ public static class BookInventoryEndpoints
         catch (Exception ex) { return Failed(app, ex, "Không lưu được đầu sách."); }
     }
 
-    private static bool ValidCoverHeader(string path, string extension)
+    private static string CoverMimeType(string extension) => extension switch
     {
-        Span<byte> header = stackalloc byte[12];
-        using var stream = File.OpenRead(path);
-        if (stream.Read(header) < header.Length) return false;
+        ".jpg" or ".jpeg" => "image/jpeg",
+        ".png" => "image/png",
+        ".webp" => "image/webp",
+        _ => throw new InvalidOperationException("Định dạng ảnh không được hỗ trợ.")
+    };
+
+    private static bool ValidCoverHeader(ReadOnlySpan<byte> header, string extension)
+    {
+        if (header.Length < 12) return false;
         if (extension is ".jpg" or ".jpeg")
             return header[0] == 0xFF && header[1] == 0xD8 && header[2] == 0xFF;
         if (extension == ".png")
@@ -564,6 +681,27 @@ public static class BookInventoryEndpoints
         if (extension == ".webp")
             return header[..4].SequenceEqual("RIFF"u8) && header[8..12].SequenceEqual("WEBP"u8);
         return false;
+    }
+
+    private static bool TryLegacyCoverFileName(string url, out string fileName)
+    {
+        fileName = "";
+        var path = url.Trim();
+        if (Uri.TryCreate(path, UriKind.Absolute, out var absolute))
+        {
+            if (!absolute.IsLoopback || absolute.Scheme != "http") return false;
+            path = absolute.AbsolutePath;
+        }
+        if (!path.StartsWith("/covers/", StringComparison.OrdinalIgnoreCase)) return false;
+        string name = path["/covers/".Length..];
+        if (name.Length is < 5 or > 160 || name.Contains('/') || name.Contains('\\') ||
+            name.Contains("..", StringComparison.Ordinal) || name.Contains('?') || name.Contains('#')) return false;
+        if (!System.Text.RegularExpressions.Regex.IsMatch(name,
+            @"\A[A-Za-z0-9_-][A-Za-z0-9_.-]*\.(jpg|jpeg|png|webp)\z",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase |
+            System.Text.RegularExpressions.RegexOptions.CultureInvariant)) return false;
+        fileName = name;
+        return true;
     }
 
     private static void SetBookParams(NpgsqlCommand cmd, BookEditRequest body,

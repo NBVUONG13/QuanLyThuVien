@@ -1032,7 +1032,7 @@ namespace QuanLyThuVien.ViewModels
                     }
                     _pendingCoverPath = null;
                     FormCoverPreview = uploaded.CoverUrl ?? "";
-                    FormCoverStatus = "Ảnh bìa đã được lưu lên API.";
+                    FormCoverStatus = "Ảnh bìa đã được lưu lên Cloudinary.";
                 }
                 if (existingId == 0)
                 {
