@@ -11,7 +11,25 @@ using SmartLibrary.Api.Services;
 var builder = WebApplication.CreateBuilder(args);
 
 // Chi lang nghe tren chinh may phat trien. WPF se goi backend qua HTTP loopback.
-builder.WebHost.UseUrls("http://127.0.0.1:5082");
+
+if (builder.Environment.IsDevelopment())
+{
+    builder.WebHost.UseUrls("http://127.0.0.1:5082");
+}
+else
+{
+    string? portValue = Environment.GetEnvironmentVariable("PORT");
+
+    if (!int.TryParse(portValue, out int cloudPort)
+        || cloudPort < 1024
+        || cloudPort > 65535)
+    {
+        cloudPort = 10000;
+    }
+
+    builder.WebHost.UseUrls($"http://0.0.0.0:{cloudPort}");
+}
+
 
 // Dang ky AuthService.cs cua buoc 29 voi Dependency Injection.
 builder.Services.AddScoped<AuthService>();
